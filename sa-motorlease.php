@@ -4020,7 +4020,6 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
     $out = [];
     if ( $q->have_posts() ) {
         $seen_models = [];
-        $seen_prices = [];
 
         foreach ( $q->posts as $post ) {
             $p = wc_get_product( $post->ID );
@@ -4031,13 +4030,12 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
             $model = $p->get_attribute( 'model' );
             $price = $p->get_price();
 
-            // Skip if model or price is already seen
-            if ( ! $model || in_array( $model, $seen_models, true ) || in_array( $price, $seen_prices, true ) ) {
+            // One row per distinct model.
+            if ( ! $model || in_array( $model, $seen_models, true ) ) {
                 continue;
             }
 
             $seen_models[] = $model;
-            $seen_prices[] = $price;
 
             $main_id   = $p->get_image_id();
             $gallery   = $p->get_gallery_image_ids();
