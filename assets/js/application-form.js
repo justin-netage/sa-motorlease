@@ -59,7 +59,7 @@ jQuery(document).ready(function ($) {
   // ✅ Lead ID Check
   let leadId = '';
   try {
-    const stored = JSON.parse(sessionStorage.getItem('lead_qualification') || localStorage.getItem('lead_qualification') || '{}');
+    const stored = JSON.parse(sessionStorage.getItem('lead_qualification') || '{}');
     leadId = stored.response?.lead_id || '';
 
     if (!leadId) {
@@ -214,7 +214,7 @@ jQuery(document).ready(function ($) {
 
     let leadId = '';
     try {
-      const stored = JSON.parse(sessionStorage.getItem('lead_qualification') || localStorage.getItem('lead_qualification') || '{}');
+      const stored = JSON.parse(sessionStorage.getItem('lead_qualification') || '{}');
       leadId = stored.response?.lead_id || '';
     } catch (_) {}
 
