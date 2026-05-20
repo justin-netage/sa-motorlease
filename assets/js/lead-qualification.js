@@ -4,11 +4,12 @@ jQuery(function($){
   if (document.cookie.indexOf('lead_qualification=') !== -1) {
     document.cookie = 'lead_qualification=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
   }
+  // Legacy cleanup: older versions persisted PII in localStorage (shared-device risk).
+  localStorage.removeItem('lead_qualification');
 
   // --- Early redirect if already qualified and on the start page ---
   const path = window.location.pathname;
-  const storedLead = sessionStorage.getItem('lead_qualification')
-    || localStorage.getItem('lead_qualification');
+  const storedLead = sessionStorage.getItem('lead_qualification');
 
   try {
     const parsed = JSON.parse(storedLead || '{}');
@@ -25,8 +26,7 @@ jQuery(function($){
   }
 
   // Prefill source (if any)
-  const savedLead = sessionStorage.getItem('lead_qualification')
-    || localStorage.getItem('lead_qualification');
+  const savedLead = sessionStorage.getItem('lead_qualification');
   let parsedLead = null;
   if (savedLead) {
     try { parsedLead = JSON.parse(savedLead); }
@@ -464,7 +464,6 @@ jQuery(function($){
               }
             };
             sessionStorage.setItem('lead_qualification', JSON.stringify(leadData));
-            localStorage.setItem('lead_qualification', JSON.stringify(leadData));
 
             // E-hailing redirect (only if not "Other")
             let goEhail = false;
