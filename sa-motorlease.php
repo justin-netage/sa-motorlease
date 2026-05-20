@@ -4003,6 +4003,7 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
     // 2) Query products whose _price <= $limit
     $args = [
         'post_type'      => 'product',
+        'post_status'    => 'publish',
         'posts_per_page' => -1,
         'meta_key'       => '_price',
         'orderby'        => 'meta_value_num',
