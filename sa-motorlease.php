@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.0
+ * Version: 2.2.1
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.0' );
+define( 'SA_MOTORLEASE_VERSION', '2.2.1' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -3702,7 +3702,7 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
 
     // External API request
     $response = wp_remote_post(
-        sa_motorlease_pace_base_url() . '/api/entity/paceWebCreateLead',
+        sa_motorlease_pace_url( '/api/entity/paceWebCreateLead' ),
         [
             'headers' => ['Content-Type' => 'application/json'],
             'body'    => wp_json_encode($data),
@@ -3841,7 +3841,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
     );
 
     // 5) Send to external API
-    $external = sa_motorlease_pace_base_url() . '/api/entity/paceWebUpdateLead';
+    $external = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
     $response = wp_remote_post( $external, [
         'headers' => [ 'Content-Type' => 'application/json' ],
         'body'    => $json_payload,
@@ -4545,7 +4545,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
     $lead_id      = (int) $data['lead_id'];
     $json_payload = wp_json_encode($data, JSON_UNESCAPED_SLASHES);
 
-    $external_url = sa_motorlease_pace_base_url() . '/api/entity/paceWebUpdateLead';
+    $external_url = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
     $response = wp_remote_post($external_url, [
         'headers' => ['Content-Type' => 'application/json'],
         'body'    => $json_payload,
@@ -5074,6 +5074,37 @@ function sa_motorlease_pace_base_url() {
     return untrailingslashit( $url );
 }
 
+/**
+ * Join an endpoint path onto the configured PACE base URL, preserving any
+ * query string the admin attached to the base (e.g. ?env=test). Naive string
+ * concatenation would place the query before the path and break the URL.
+ *
+ *   pace_base_url = https://host?env=test
+ *   path          = /api/entity/paceWebCreateLead
+ *   result        = https://host/api/entity/paceWebCreateLead?env=test
+ */
+function sa_motorlease_pace_url( $path = '' ) {
+    $base  = sa_motorlease_get_setting( 'pace_base_url', 'https://paceapp-server.azurewebsites.net' );
+    $parts = wp_parse_url( (string) $base );
+
+    if ( ! $parts || empty( $parts['host'] ) ) {
+        // Fallback: best-effort concat if the configured value is unparseable.
+        return rtrim( (string) $base, '/' ) . $path;
+    }
+
+    $scheme    = $parts['scheme'] ?? 'https';
+    $host      = $parts['host'];
+    $port      = isset( $parts['port'] )  ? ':' . $parts['port']           : '';
+    $base_path = isset( $parts['path'] )  ? rtrim( $parts['path'], '/' )   : '';
+    $query     = isset( $parts['query'] ) ? '?' . $parts['query']          : '';
+
+    if ( $path !== '' && $path[0] !== '/' ) {
+        $path = '/' . $path;
+    }
+
+    return $scheme . '://' . $host . $port . $base_path . $path . $query;
+}
+
 function sa_motorlease_pace_posting_enabled() {
     return (bool) sa_motorlease_get_setting( 'pace_enabled', 1 );
 }
@@ -5273,7 +5304,7 @@ function sa_motorlease_field_pace_base_url() {
         '<input type="url" class="regular-text code" name="%s[pace_base_url]" value="%s" placeholder="https://paceapp-server.azurewebsites.net">',
         esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
     );
-    echo '<p class="description">No trailing slash. Use the preview host (<code>https://paceapp-server-preview.azurewebsites.net</code>) to test changes against the staging API.</p>';
+    echo '<p class="description">No trailing slash. A query string is allowed and will be preserved on every endpoint — e.g. <code>https://paceapp-server.azurewebsites.net?env=test</code> produces calls like <code>.../api/entity/paceWebCreateLead?env=test</code>. Use the preview host (<code>https://paceapp-server-preview.azurewebsites.net</code>) to test changes against the staging API.</p>';
 }
 
 function sa_motorlease_field_pace_enabled() {
@@ -5405,6 +5436,7 @@ function sa_motorlease_render_status_page() {
         <table class="widefat striped" style="max-width:900px">
             <tbody>
                 <tr><th style="width:240px">PACE base URL</th><td><code><?php echo esc_html( $pace_base ); ?></code></td></tr>
+                <tr><th>Example endpoint</th><td><code><?php echo esc_html( sa_motorlease_pace_url( '/api/entity/paceWebCreateLead' ) ); ?></code></td></tr>
                 <tr><th>PACE posting</th><td><?php echo sa_motorlease_pace_posting_enabled() ? '<span style="color:#137333">enabled</span>' : '<span style="color:#b91c1c">disabled</span>'; ?></td></tr>
                 <tr><th>Qualify form IDs</th><td><code><?php echo esc_html( $settings['qualify_form_ids'] ); ?></code></td></tr>
                 <tr><th>Forwarder form ID</th><td><code><?php echo (int) $settings['gf_forwarder_form_id']; ?></code> (hook: <code>gform_after_submission_<?php echo (int) $settings['gf_forwarder_form_id']; ?></code>)</td></tr>
