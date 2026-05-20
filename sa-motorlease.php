@@ -162,10 +162,6 @@ add_action('init', function () {
         wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'sa_motorlease_log_rotate_daily');
     }
 });
-register_deactivation_hook(__FILE__, function () {
-    $ts = wp_next_scheduled('sa_motorlease_log_rotate_daily');
-    if ($ts) wp_unschedule_event($ts, 'sa_motorlease_log_rotate_daily');
-});
 
 // === Legacy logger shims (route everything through sa_motorlease_log) =======
 
@@ -1667,9 +1663,18 @@ register_activation_hook(__FILE__, function () {
 });
 
 register_deactivation_hook(__FILE__, function () {
-    foreach (['vi_create_hourly_event', 'vi_update_hourly_event', 'vehicle_importer_hourly_event'] as $hook) {
-        $ts = wp_next_scheduled($hook);
-        if ($ts) wp_unschedule_event($ts, $hook);
+    foreach ([
+        'vi_create_hourly_event',
+        'vi_update_hourly_event',
+        'vehicle_importer_hourly_event',
+        'vehicle_images_repair_event',
+        'vi_image_sync_cron',
+        'set_sold_date_cron_event',
+        'delete_expired_sold_products_event',
+        'fix_and_replace_broken_images',
+        'sa_motorlease_log_rotate_daily',
+    ] as $hook) {
+        wp_clear_scheduled_hook($hook);
     }
     log_import_update('Deactivation: all crons unscheduled.');
 });
@@ -4249,9 +4254,6 @@ add_action('init', function () {
     }
 });
 
-register_deactivation_hook(__FILE__, function () {
-    wp_clear_scheduled_hook('fix_and_replace_broken_images');
-});
 
 // ---------------------------------------------------------------------------
 // --- Admin URL: ?test_image_feed
