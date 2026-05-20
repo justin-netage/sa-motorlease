@@ -3784,16 +3784,44 @@ add_action( 'init', function () {
 }, 5 );
 function gf5_forward_to_external_api( $entry, $form ) {
 
-    // 1) Build the base payload, casting lead_id to integer
+    // Keep PHP alive even if the browser closes after form submit.
+    @set_time_limit( 0 );
+    ignore_user_abort( true );
+
+    $lead_id   = intval( rgar( $entry, '42' ) );
     $proof_raw = rgar( $entry, '35' );
     $proof     = filter_var( $proof_raw, FILTER_VALIDATE_BOOLEAN ) ? 'true' : 'false';
+    $external  = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
 
-    $payload = [
-        'home_address'   => [
-            'street'   => rgar( $entry, '44' ),   // New plain text field
+    // Helper: POST a payload to paceWebUpdateLead and log any error.
+    $send = function ( array $data, string $context ) use ( $external, $lead_id ) {
+        $response = wp_remote_post( $external, [
+            'headers' => [ 'Content-Type' => 'application/json' ],
+            'body'    => wp_json_encode( $data, JSON_UNESCAPED_SLASHES ),
+            'timeout' => 120,
+        ] );
+        if ( is_wp_error( $response ) ) {
+            sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
+                sprintf( 'WP_Error paceWebUpdateLead %s (lead_id=%d): %s',
+                    $context, $lead_id, $response->get_error_message() ) );
+        } else {
+            $code = wp_remote_retrieve_response_code( $response );
+            if ( $code < 200 || $code >= 300 ) {
+                sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
+                    sprintf( 'paceWebUpdateLead HTTP %d %s (lead_id=%d) body=%s',
+                        $code, $context, $lead_id, substr( wp_remote_retrieve_body( $response ), 0, 500 ) ) );
+            }
+        }
+    };
+
+    // 1) Send the base lead data (no files).
+    $send( [
+        'lead_id'           => $lead_id,
+        'home_address'      => [
+            'street'   => rgar( $entry, '44' ),
             'suburb'   => rgar( $entry, '45' ),
             'city'     => rgar( $entry, '46' ),
-            'province' => rgar( $entry, '47' ),   // Dropdown
+            'province' => rgar( $entry, '47' ),
             'country'  => 'South Africa',
         ],
         'occupation'        => rgar( $entry, '18' ),
@@ -3801,26 +3829,26 @@ function gf5_forward_to_external_api( $entry, $form ) {
         'employer_name'     => rgar( $entry, '21' ),
         'work_email'        => rgar( $entry, '23' ),
         'work_phone'        => rgar( $entry, '24' ),
-        'work_address'   => [
-            'street'   => rgar( $entry, '48' ),   // New plain text field
+        'work_address'      => [
+            'street'   => rgar( $entry, '48' ),
             'suburb'   => rgar( $entry, '49' ),
             'city'     => rgar( $entry, '50' ),
-            'province' => rgar( $entry, '51' ),   // Dropdown
+            'province' => rgar( $entry, '51' ),
             'country'  => 'South Africa',
         ],
-        'proof_address'   => $proof,
-        'required_by'     => rgar( $entry, '38' ),
-        'lead_id'         => intval( rgar( $entry, '42' ) ),
-        'bank_statements' => [ 'objData' => [] ],
-    ];
+        'proof_address'     => $proof,
+        'required_by'       => rgar( $entry, '38' ),
+        'bank_statements'   => [ 'objData' => [] ],
+    ], 'base-data' );
 
-    // 2) Collect uploads and build Data-URI strings
-    $upload   = wp_upload_dir();
-    $baseurl  = trailingslashit( $upload['baseurl'] );
-    $basedir  = trailingslashit( $upload['basedir'] );
-    $uris     = [];
+    // 2) Send each bank statement file as a separate request to keep
+    //    memory usage bounded — one file at a time rather than all at once.
+    $upload  = wp_upload_dir();
+    $baseurl = trailingslashit( $upload['baseurl'] );
+    $basedir = trailingslashit( $upload['basedir'] );
+    $max_bytes = 10 * 1024 * 1024; // 10 MB per file
 
-    foreach ( [32,33,34] as $fid ) {
+    foreach ( [ 32, 33, 34 ] as $fid ) {
         $urls_string = rgar( $entry, (string) $fid );
         if ( ! $urls_string ) {
             continue;
@@ -3836,47 +3864,19 @@ function gf5_forward_to_external_api( $entry, $form ) {
             if ( ! file_exists( $full ) ) {
                 continue;
             }
-            // read & base64-encode
-            $b64  = base64_encode( file_get_contents( $full ) );
+            if ( filesize( $full ) > $max_bytes ) {
+                sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
+                    sprintf( 'Skipping oversized bank statement (lead_id=%d, file=%s, size=%d bytes)',
+                        $lead_id, basename( $full ), filesize( $full ) ) );
+                continue;
+            }
             $mime = wp_check_filetype( $full )['type'] ?? 'application/octet-stream';
-            $uris[] = "data:{$mime};base64,{$b64}";
-        }
-    }
-
-    // 3) Wrap each URI in an object with key "data"
-    $payload['bank_statements'] = [
-        'objData' => array_map( function( $uri ) {
-            return [ 'data' => $uri ];
-        }, $uris )
-    ];
-
-    // 4) JSON-encode with unescaped slashes and pretty print
-    $json_payload = wp_json_encode(
-        $payload,
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
-    );
-
-    // 5) Send to external API
-    $external = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
-    $response = wp_remote_post( $external, [
-        'headers' => [ 'Content-Type' => 'application/json' ],
-        'body'    => $json_payload,
-        'timeout' => 30,
-    ] );
-
-    // 6) Log only on error. Successful 2xx is silent.
-    $lead_id = (int) ( $payload['lead_id'] ?? 0 );
-    if ( is_wp_error( $response ) ) {
-        sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
-            sprintf( 'WP_Error from paceWebUpdateLead (lead_id=%d): %s',
-                $lead_id, $response->get_error_message() ) );
-    } else {
-        $code = wp_remote_retrieve_response_code( $response );
-        if ( $code < 200 || $code >= 300 ) {
-            $body = wp_remote_retrieve_body( $response );
-            sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
-                sprintf( 'paceWebUpdateLead HTTP %d (lead_id=%d) body=%s',
-                    $code, $lead_id, substr( $body, 0, 1000 ) ) );
+            $b64  = base64_encode( file_get_contents( $full ) );
+            $send( [
+                'lead_id'         => $lead_id,
+                'bank_statements' => [ 'objData' => [ [ 'data' => "data:{$mime};base64,{$b64}" ] ] ],
+            ], 'bank-statement-field-' . $fid );
+            unset( $b64 ); // release memory before next file
         }
     }
 }
