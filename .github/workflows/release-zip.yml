@@ -1,0 +1,40 @@
+name: Attach release zip
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+
+      - name: Build plugin zip
+        run: |
+          set -euo pipefail
+          STAGING="$RUNNER_TEMP/sa-motorlease"
+          mkdir -p "$STAGING"
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='.gitignore' \
+            --exclude='.gitattributes' \
+            --exclude='.editorconfig' \
+            --exclude='tests' \
+            --exclude='sa-motorlease.zip' \
+            ./ "$STAGING/"
+          cd "$RUNNER_TEMP"
+          zip -rq sa-motorlease.zip sa-motorlease
+
+      - name: Attach zip to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            "$RUNNER_TEMP/sa-motorlease.zip" \
+            --clobber \
+            --repo "${{ github.repository }}"
