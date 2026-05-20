@@ -2205,6 +2205,9 @@ add_action('init', function () {
         status_header(403);
         exit('Forbidden - admin access required');
     }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
 
     log_image_repair('URL trigger activated: ?vi_repair_images=1');
 
@@ -2239,8 +2242,14 @@ add_action('init', function () {
 
     if (!$sku && $result['scanned'] >= $limit) {
         $next_offset = $offset + $limit;
+        $next_url    = add_query_arg([
+            'vi_repair_images' => '1',
+            'limit'            => $limit,
+            'offset'           => $next_offset,
+            '_wpnonce'         => wp_create_nonce('sa_motorlease_admin_action'),
+        ], admin_url());
         echo "\nMore products may exist. To continue:\n";
-        echo "?vi_repair_images=1&limit={$limit}&offset={$next_offset}\n";
+        echo esc_url_raw($next_url) . "\n";
     }
 
     exit;
@@ -2402,6 +2411,9 @@ add_action('init', function () {
         status_header(403);
         exit('Forbidden - admin access required');
     }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
 
     $dry_run = !empty($_GET['dry_run']);
     $sku     = isset($_GET['sku']) ? sanitize_text_field($_GET['sku']) : null;
@@ -2468,6 +2480,7 @@ h1{font-size:18px;color:#f0f6fc;margin-bottom:16px;display:flex;align-items:cent
 const TOTAL   = <?= $total_js ?>;
 const DRY_RUN = <?= $dry_run_js ?>;
 const SKU     = <?= $sku_js ?>;
+const NONCE   = <?= wp_json_encode(wp_create_nonce('sa_motorlease_admin_action')) ?>;
 const BATCH   = 20;
 
 let offset = 0, batch = 0;
@@ -2495,6 +2508,7 @@ async function runBatch() {
     const p = new URLSearchParams({vi_sync_batch:1, offset, limit:BATCH});
     if (DRY_RUN) p.set('dry_run', 1);
     if (SKU)     p.set('sku', SKU);
+    if (NONCE)   p.set('_wpnonce', NONCE);
 
     document.getElementById('status').textContent =
         'Processing batch ' + batch + '… (' + offset + ' / ' + (TOTAL || '?') + ' products)';
@@ -2552,6 +2566,11 @@ add_action('init', function () {
     if (!is_user_logged_in() || !current_user_can('manage_options')) {
         status_header(403);
         wp_send_json_error('Forbidden', 403);
+        exit;
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        status_header(403);
+        wp_send_json_error('Security check failed', 403);
         exit;
     }
 
@@ -5531,26 +5550,28 @@ function sa_motorlease_render_status_page() {
         <p style="color:#666;font-size:13px;">All links below include a security token and expire after 1 day. Do not share these URLs.</p>
         <?php
         $tools = [
-            // [ label, query_arg, description, dangerous ]
-            [ 'Cleanup sold products',          'cleanup_sold_products',          'Mark in-feed sold vehicles and clean up sold status.',                  false ],
-            [ 'Update sold status from feed',   'update_sold_from_feed',          'Re-sync sold/available status against the live PACE feed.',             false ],
-            [ 'Log missing products',           'log_missing_products',           'Write a log of products absent from the feed (no writes).',             false ],
-            [ 'Remove missing products',        'remove_missing_products',        'Delete WooCommerce products that are no longer in the PACE feed.',      true  ],
-            [ 'Remove products by reg',         'remove_by_reg_cleanup',          'Strip registration-number attributes from products.',                   false ],
-            [ 'Format deposit special',         'format_deposit_special',         'Re-format the Initiation Fee Special attribute values.',                false ],
-            [ 'Cleanup initiation fee special', 'cleanup_initiation_fee_special', 'Remove Initiation Fee Special attributes from products.',               false ],
-            [ 'Fix broken images',              'fix_broken_images',              'Trigger the image-repair cron immediately.',                             false ],
-            [ 'Backfill image ALT text',        'backfill_image_alt',             'Set ALT text on all vehicle images that are missing it.',                false ],
-            [ 'Payments backfill',              'run_payments_backfill',          'Schedule the Number of Payments attribute backfill cron.',              false ],
-            [ 'WBW cleanup ghosts',             'wbw_cleanup_ghosts',             'Remove WBW index rows for products that no longer exist.',              false ],
-            [ 'Deduplicate products',           'deduplicate_products',           'Remove duplicate WooCommerce products with the same SKU.',              true  ],
-            [ 'Update license plates',          'update_license_plates',          'Backfill license plate attributes from the PACE feed.',                 false ],
+            // [ label, query_arg, description, dangerous, new_tab ]
+            [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
+            [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
+            [ 'Cleanup sold products',          'cleanup_sold_products',          'Mark in-feed sold vehicles and clean up sold status.',                  false, false ],
+            [ 'Update sold status from feed',   'update_sold_from_feed',          'Re-sync sold/available status against the live PACE feed.',             false, false ],
+            [ 'Log missing products',           'log_missing_products',           'Write a log of products absent from the feed (no writes).',             false, false ],
+            [ 'Remove missing products',        'remove_missing_products',        'Delete WooCommerce products that are no longer in the PACE feed.',      true,  false ],
+            [ 'Remove products by reg',         'remove_by_reg_cleanup',          'Strip registration-number attributes from products.',                   false, false ],
+            [ 'Format deposit special',         'format_deposit_special',         'Re-format the Initiation Fee Special attribute values.',                false, false ],
+            [ 'Cleanup initiation fee special', 'cleanup_initiation_fee_special', 'Remove Initiation Fee Special attributes from products.',               false, false ],
+            [ 'Fix broken images',              'fix_broken_images',              'Trigger the image-repair cron immediately.',                             false, false ],
+            [ 'Backfill image ALT text',        'backfill_image_alt',             'Set ALT text on all vehicle images that are missing it.',                false, false ],
+            [ 'Payments backfill',              'run_payments_backfill',          'Schedule the Number of Payments attribute backfill cron.',              false, false ],
+            [ 'WBW cleanup ghosts',             'wbw_cleanup_ghosts',             'Remove WBW index rows for products that no longer exist.',              false, false ],
+            [ 'Deduplicate products',           'deduplicate_products',           'Remove duplicate WooCommerce products with the same SKU.',              true,  false ],
+            [ 'Update license plates',          'update_license_plates',          'Backfill license plate attributes from the PACE feed.',                 false, false ],
         ];
         ?>
         <table class="widefat striped" style="max-width:900px">
             <thead><tr><th style="width:220px">Action</th><th>Description</th><th style="width:80px"></th></tr></thead>
             <tbody>
-            <?php foreach ( $tools as [ $label, $param, $desc, $danger ] ) :
+            <?php foreach ( $tools as [ $label, $param, $desc, $danger, $new_tab ] ) :
                 $url = wp_nonce_url( add_query_arg( $param, '1', admin_url() ), 'sa_motorlease_admin_action' );
             ?>
                 <tr>
@@ -5559,10 +5580,11 @@ function sa_motorlease_render_status_page() {
                     <td>
                         <a href="<?php echo esc_url( $url ); ?>"
                            class="button <?php echo $danger ? 'button-primary' : 'button-secondary'; ?>"
+                           <?php if ( $new_tab ) : ?>target="_blank" rel="noopener"<?php endif; ?>
                            <?php if ( $danger ) : ?>
                            onclick="return confirm(<?php echo wp_json_encode( 'Run "' . $label . '"? This cannot be undone.' ); ?>)"
                            <?php endif; ?>>
-                            Run
+                            <?php echo $new_tab ? 'Open' : 'Run'; ?>
                         </a>
                     </td>
                 </tr>
