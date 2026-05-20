@@ -1559,7 +1559,11 @@ function vi_update_existing_products() {
                 log_import_update("Update: images unchanged for product_id={$existing_id} (sku={$sku}) — skipping re-upload (hash={$stored_hash}).");
             }
         } else {
-            log_import_update("Update: write_date changed but no images available in feed for sku={$sku} — keeping existing images.");
+            // Feed returned no images — don't advance write_date so the next
+            // run retries image sync rather than treating the product as done.
+            log_import_update("Update: write_date changed but no images available in feed for sku={$sku} — keeping existing images, deferring write_date.");
+            $updated++;
+            continue;
         }
 
         // === Persist new write_date marker ===
@@ -2140,8 +2144,10 @@ if (!function_exists('repair_missing_vehicle_images')) {
             $feed_image_count = count($prepared['featured']) + count($prepared['gallery']);
             log_image_repair("product {$pid} (sku={$sku}): feed has {$feed_image_count} images available");
 
-            // Perform the repair
+            // Perform the repair; hold the lock so sync doesn't collide.
+            set_transient( "vi_attach_lock_{$pid}", time(), 120 );
             vi_attach_prepared_images_repair($pid, $title, $prepared);
+            delete_transient( "vi_attach_lock_{$pid}" );
             $repaired++;
 
             log_image_repair("product {$pid} (sku={$sku}): repair completed");
@@ -2349,7 +2355,9 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
                     log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] images differ from feed — would update");
                 } else {
                     log_image_repair("product {$pid} (sku={$sku}): images differ from feed — syncing per-image");
+                    set_transient( "vi_attach_lock_{$pid}", time(), 120 );
                     vi_diff_sync_product_images($pid, $fresh_prepared);
+                    delete_transient( "vi_attach_lock_{$pid}" );
                 }
                 $updated++;
             }
@@ -2367,7 +2375,9 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
             log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] images CHANGED (old={$stored_hash} new={$fresh_hash}) — no changes made");
         } else {
             log_image_repair("product {$pid} (sku={$sku}): images CHANGED (old={$stored_hash} new={$fresh_hash}) — syncing per-image");
+            set_transient( "vi_attach_lock_{$pid}", time(), 120 );
             vi_diff_sync_product_images($pid, $fresh_prepared);
+            delete_transient( "vi_attach_lock_{$pid}" );
         }
         $updated++;
     }
