@@ -1591,7 +1591,12 @@ function vi_update_existing_products() {
             }
 
             $sku = get_post_meta($pid, '_sku', true);
-            $skip_removal = wc_get_product($pid)->get_attribute('Skip Removal');
+            $wc_product = wc_get_product($pid);
+            if ( ! $wc_product ) {
+                log_import_update("Prune: skipping product_id={$pid} — wc_get_product() returned false (broken postmeta?)");
+                continue;
+            }
+            $skip_removal = $wc_product->get_attribute('Skip Removal');
 
             if (strcasecmp(trim($skip_removal), 'yes') === 0) {
                 log_import_update("Prune: skipping product_id={$pid} (SKU={$sku}) — marked 'Skip Removal: Yes'");
