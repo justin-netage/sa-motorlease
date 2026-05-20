@@ -3995,9 +3995,6 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
         $limit = floatval( $db_limit );
     }
 
-    // Log for debugging
-    error_log( "[samotorlease] qualified-vehicles called with rental_limit={$limit}" );
-
     // 2) Query products whose _price <= $limit
     $args = [
         'post_type'      => 'product',
