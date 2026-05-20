@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.1.0
+Stable tag: 2.2.0
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,12 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.2.0 =
+* New top-level **SA Motorlease** admin menu with **Settings** and **Status** subpages.
+* Settings (stored in option `sa_motorlease_settings`): PACE base URL, "post to PACE" kill switch, qualify form IDs, Gravity Forms forwarder form ID, log level, log retention days. Wired into the `/qualify-lead`, `/partial-save` and GF forwarder code paths.
+* Status page: plugin / WP / PHP / WooCommerce / Gravity Forms versions, effective configuration, lead-qualifications row count + latest entry, scheduled cron next-run times, log file size + last-50-line tail.
+* **Bug fix:** the ID Number field on the lead qualification form was declared `type: 'id'` but `validateAllFields()` had no `case 'id'`, so empty or malformed IDs fell through validation and were forwarded to `paceWebCreateLead`. Added 13-digit + SA Luhn mod-10 checksum validation client-side, and matching server-side validation in the `/qualify-lead` REST endpoint that rejects with a user-visible error before the PACE call. Bumped the enqueued lead-qualification.js version to 1.2.0 to bust browser caches.
 
 = 2.1.0 =
 * Consolidated logging. All 19 legacy log files now route through a single rolling `sa-motorlease.log` with `[channel][LEVEL]` tags.
