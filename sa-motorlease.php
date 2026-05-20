@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.2
+ * Version: 2.2.3
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.2' );
+define( 'SA_MOTORLEASE_VERSION', '2.2.3' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -3591,7 +3591,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.2.1',                     // Version — bumped: looser SA phone validation (strip formatting)
+            '1.2.2',                     // Version — bumped: drop client-side SA ID Luhn check
             true                      // Load in footer
         );
     }
@@ -5137,9 +5137,8 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
     if ( ! preg_match( '/^\d{13}$/', $id ) ) {
         return 'ID Number must be 13 digits.';
     }
-    if ( ! sa_motorlease_is_valid_sa_id( $id ) ) {
-        return 'Please enter a valid South African ID Number.';
-    }
+    // Deliberately no Luhn check here — PACE validates the ID against the
+    // Home Affairs database, and our local Luhn was rejecting real IDs.
 
     if ( ! is_email( $data['your_email'] ) ) {
         return 'Please enter a valid email address.';
@@ -5164,23 +5163,6 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
     }
 
     return null;
-}
-
-/**
- * SA ID Luhn-style mod-10 checksum, mirroring the JS isValidSAID().
- */
-function sa_motorlease_is_valid_sa_id( $id ) {
-    if ( ! preg_match( '/^\d{13}$/', (string) $id ) ) return false;
-    $sum = 0;
-    for ( $i = 0; $i < 13; $i++ ) {
-        $d = (int) $id[ $i ];
-        if ( $i % 2 === 1 ) {
-            $d *= 2;
-            if ( $d > 9 ) $d -= 9;
-        }
-        $sum += $d;
-    }
-    return ( $sum % 10 ) === 0;
 }
 
 // --- Admin menu -------------------------------------------------------------

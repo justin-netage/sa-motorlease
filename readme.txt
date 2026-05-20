@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.2.2
+Stable tag: 2.2.3
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.2.3 =
+* Drop the client- and server-side SA ID Luhn checksum from the lead qualification flow — it was rejecting real ID numbers and leaving the submit button stuck disabled. The validator now only requires the field to be filled in and exactly 13 digits; PACE itself validates the ID against the Home Affairs database.
 
 = 2.2.2 =
 * Looser phone-number validation on the lead qualification form. Numbers like `+27 71 234 5678`, `(071) 234-5678`, `+27-71-234-5678` are now accepted — non-digit characters are stripped and only the digit shape is checked (`0XXXXXXXXX` or `27XXXXXXXXX`). Previously a number with spaces or punctuation would silently fail validation and leave the submit button disabled with no obvious explanation. Server-side validator updated to match.
