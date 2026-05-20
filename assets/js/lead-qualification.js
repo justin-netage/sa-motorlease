@@ -49,26 +49,22 @@ jQuery(function($){
   }
 
   // --- Validation helpers ---
-  const phoneRx = /^(0\d{9}|\+27\d{9}|\(0\d{2}\)\s?\d{3}[-\s]?\d{4})$/;
+  // South African mobile number: accept any input the user might paste — with
+  // spaces, dashes, parens, country code prefix, etc. — and validate the
+  // underlying digit string only. Two shapes are allowed:
+  //   national:      0XXXXXXXXX  (10 digits, leading 0)
+  //   international: 27XXXXXXXXX (11 digits, leading 27, with or without +)
+  function isValidSAPhone(s) {
+    const digits = String(s || '').replace(/\D+/g, '');
+    return /^0\d{9}$/.test(digits) || /^27\d{9}$/.test(digits);
+  }
   const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  // South African ID: 13 digits with a mod-10 (Luhn-style) checksum.
-  // The last digit is computed by doubling every second digit (right to left
-  // in the spec; equivalent to doubling odd-indexed digits left to right for
-  // a 13-digit number) and reducing the sum to a multiple of 10.
-  function isValidSAID(id) {
-    if (!/^\d{13}$/.test(id)) return false;
-    let sum = 0;
-    for (let i = 0; i < 13; i++) {
-      let d = parseInt(id.charAt(i), 10);
-      if ((i % 2) === 1) {
-        d *= 2;
-        if (d > 9) d -= 9;
-      }
-      sum += d;
-    }
-    return (sum % 10) === 0;
-  }
+  // South African ID: format-only check (13 digits). PACE itself does the
+  // deeper validation against the Home Affairs database, so we deliberately
+  // don't run a client-side Luhn checksum here — it was rejecting real IDs
+  // for users in the wild.
+  const idRx = /^\d{13}$/;
 
   // --- Prefill helpers for booleans -> selects ---
   function setYesNoSelectFromBool($select, boolVal){
@@ -302,12 +298,11 @@ jQuery(function($){
         let valid = true, msg = '';
         switch (fld.type) {
           case 'text':    valid = val.length > 0; msg = `${fld.name} is required.`; break;
-          case 'tel':     valid = phoneRx.test(val); msg = 'Please enter a valid SA phone number.'; break;
+          case 'tel':     valid = isValidSAPhone(val); msg = 'Please enter a valid SA phone number.'; break;
           case 'email':   valid = emailRx.test(val); msg = 'Please enter a valid email address.'; break;
           case 'id':
             if (!val.length) { valid = false; msg = `${fld.name} is required.`; }
-            else if (!/^\d{13}$/.test(val)) { valid = false; msg = 'ID Number must be 13 digits.'; }
-            else if (!isValidSAID(val)) { valid = false; msg = 'Please enter a valid South African ID Number.'; }
+            else if (!idRx.test(val)) { valid = false; msg = 'ID Number must be 13 digits.'; }
             break;
           case 'select':  valid = val !== ''; msg = `Please select a ${fld.name.toLowerCase()}.`; break;
           case 'checkbox':valid = val === true; msg = 'You must accept the terms.'; break;
