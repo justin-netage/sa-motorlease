@@ -3017,6 +3017,10 @@ function vi_migrate_rebate_target() {
     if ( get_option( 'vi_rebate_target_migration_done' ) ) {
         return;
     }
+    // Rate-limit retries so a broken feed doesn't slow every page load.
+    if ( get_transient( 'vi_rebate_migration_retry_lock' ) ) {
+        return;
+    }
 
     log_import_update( '=== Rebate Target migration START ===' );
 
@@ -3025,18 +3029,21 @@ function vi_migrate_rebate_target() {
 
     if ( is_wp_error( $response ) ) {
         log_import_update( 'Rebate Target migration: feed request failed: ' . $response->get_error_message() );
-        return; // Try again on next init until it succeeds
+        set_transient( 'vi_rebate_migration_retry_lock', 1, HOUR_IN_SECONDS );
+        return;
     }
 
     $code = wp_remote_retrieve_response_code( $response );
     if ( $code !== 200 ) {
         log_import_update( "Rebate Target migration: feed HTTP {$code}; aborting." );
+        set_transient( 'vi_rebate_migration_retry_lock', 1, HOUR_IN_SECONDS );
         return;
     }
 
     $items = json_decode( wp_remote_retrieve_body( $response ), true );
     if ( ! is_array( $items ) ) {
         log_import_update( 'Rebate Target migration: feed JSON parse failed.' );
+        set_transient( 'vi_rebate_migration_retry_lock', 1, HOUR_IN_SECONDS );
         return;
     }
 
@@ -3122,23 +3129,23 @@ function sa_motorlease_product_importer_create_lead_table() {
         $table_name
     ));
 
-    if ($table_exists !== $table_name) {
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
 
-        $sql = "CREATE TABLE $table_name (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            lead_id BIGINT NOT NULL,
-            state VARCHAR(50) NOT NULL,
-            qualify_salary BOOLEAN NOT NULL,
-            qualify_license BOOLEAN NOT NULL,
-            qualify_area BOOLEAN NOT NULL,
-            rental_limit DECIMAL(10,2) NOT NULL,
-            fast_track BOOLEAN NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) $charset_collate;";
+    // Always run dbDelta so it can add missing columns/keys to existing tables.
+    $sql = "CREATE TABLE $table_name (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        lead_id BIGINT NOT NULL,
+        state VARCHAR(50) NOT NULL,
+        qualify_salary BOOLEAN NOT NULL,
+        qualify_license BOOLEAN NOT NULL,
+        qualify_area BOOLEAN NOT NULL,
+        rental_limit DECIMAL(10,2) NOT NULL,
+        fast_track BOOLEAN NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY lead_id_uniq (lead_id)
+    ) $charset_collate;";
 
-        dbDelta($sql);
-    }
+    dbDelta( $sql );
 }
 
 // ---------------------------------------------------------------------------
@@ -3343,12 +3350,16 @@ function delete_expired_sold_products() {
     foreach ($products as $wc_product) {
         if (!$wc_product instanceof WC_Product) continue;
 
-        // Fetch the "Sold Date" from the attribute
-        $sold_date = $wc_product->get_attribute('pa_sold-date');
+        // Use wp_get_post_terms so we get individual term names, not a
+        // comma-joined string (which breaks strtotime on multi-term values).
+        $pid        = $wc_product->get_id();
+        $date_terms = wp_get_post_terms( $pid, 'pa_sold-date', [ 'fields' => 'names' ] );
+        $sold_date  = ( is_array( $date_terms ) && ! empty( $date_terms ) ) ? $date_terms[0] : '';
 
-        if (!empty($sold_date) && strtotime($sold_date) < $seven_days_ago) {
-            wp_delete_post($wc_product->get_id(), true);
-            log_to_file("Deleted product ID: {$wc_product->get_id()} marked as sold for more than 7 days.", "sold-vehicles.log");
+        $dt = $sold_date ? DateTime::createFromFormat( 'Y-m-d', $sold_date ) : false;
+        if ( $dt && $dt->getTimestamp() < $seven_days_ago ) {
+            wp_delete_post( $pid, true );
+            log_to_file( "Deleted product ID: {$pid} marked as sold for more than 7 days.", 'sold-vehicles.log' );
         }
     }
 }
