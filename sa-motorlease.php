@@ -4028,7 +4028,15 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
         $limit = floatval( $db_limit );
     }
 
-    // 2) Query products whose _price <= $limit
+    // 2) Serve from cache when possible — this endpoint is hit on every
+    //    results-page load by every visitor, and the catalogue changes hourly.
+    $cache_key = 'samotorlease_qv_' . md5( (string) $limit );
+    $cached    = get_transient( $cache_key );
+    if ( $cached !== false ) {
+        return rest_ensure_response( $cached );
+    }
+
+    // 3) Query products whose _price <= $limit
     $args = [
         'post_type'      => 'product',
         'post_status'    => 'publish',
@@ -4045,7 +4053,7 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
     ];
     $q = new WP_Query( $args );
 
-    // 3) Build response
+    // 4) Build response
     $out = [];
     if ( $q->have_posts() ) {
         $seen_models = [];
@@ -4082,6 +4090,8 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
             ];
         }
     }
+
+    set_transient( $cache_key, $out, 5 * MINUTE_IN_SECONDS );
 
     return rest_ensure_response( $out );
 }
