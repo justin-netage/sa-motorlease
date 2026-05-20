@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.0.0
+ * Version: 2.1.0
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.0.0' );
+define( 'SA_MOTORLEASE_VERSION', '2.1.0' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -39,33 +39,150 @@ if (!defined('VI_PRUNE_NONFEED_PRODUCTS')) define('VI_PRUNE_NONFEED_PRODUCTS', t
 // true = don't delete, only log (for pruning or post-attach remove-on-no-images)
 if (!defined('VI_PRUNE_DRY_RUN')) define('VI_PRUNE_DRY_RUN', false);
 
-// === Logger helpers (logs to this plugin directory) =========================
+// === Central logger + retention =============================================
+//
+// All plugin logging routes through sa_motorlease_log() and lands in a single
+// rolling file: sa-motorlease.log (in this plugin directory). Each line is
+// tagged with [channel] and [LEVEL]. Lines below SA_MOTORLEASE_LOG_LEVEL are
+// silently dropped, so flipping the threshold to DEBUG temporarily restores
+// verbose tracing without touching call sites.
+//
+// A daily WP-cron event (sa_motorlease_log_rotate_daily) trims any line
+// older than SA_MOTORLEASE_LOG_RETENTION_DAYS days.
 
-function vehicle_import_log_path() {
+if (!defined('SA_MOTORLEASE_LOG_ERROR')) define('SA_MOTORLEASE_LOG_ERROR', 10);
+if (!defined('SA_MOTORLEASE_LOG_WARN'))  define('SA_MOTORLEASE_LOG_WARN',  20);
+if (!defined('SA_MOTORLEASE_LOG_INFO'))  define('SA_MOTORLEASE_LOG_INFO',  30);
+if (!defined('SA_MOTORLEASE_LOG_DEBUG')) define('SA_MOTORLEASE_LOG_DEBUG', 40);
+
+// Threshold: lines AT THIS LEVEL OR MORE IMPORTANT (smaller number) are written.
+if (!defined('SA_MOTORLEASE_LOG_LEVEL'))           define('SA_MOTORLEASE_LOG_LEVEL', SA_MOTORLEASE_LOG_WARN);
+if (!defined('SA_MOTORLEASE_LOG_RETENTION_DAYS'))  define('SA_MOTORLEASE_LOG_RETENTION_DAYS', 21);
+
+function sa_motorlease_log_path() {
     if (!defined('VEHICLE_IMPORT_PLUGIN_FILE')) {
         define('VEHICLE_IMPORT_PLUGIN_FILE', __FILE__);
     }
     $dir = plugin_dir_path(VEHICLE_IMPORT_PLUGIN_FILE);
-    if (substr($dir, -1) !== DIRECTORY_SEPARATOR) {
-        $dir .= DIRECTORY_SEPARATOR;
+    if (substr($dir, -1) !== DIRECTORY_SEPARATOR) $dir .= DIRECTORY_SEPARATOR;
+    return $dir . 'sa-motorlease.log';
+}
+
+function sa_motorlease_log($channel, $level, $msg) {
+    if ((int)$level > (int)SA_MOTORLEASE_LOG_LEVEL) return;
+    static $labels = [
+        SA_MOTORLEASE_LOG_ERROR => 'ERROR',
+        SA_MOTORLEASE_LOG_WARN  => 'WARN',
+        SA_MOTORLEASE_LOG_INFO  => 'INFO',
+        SA_MOTORLEASE_LOG_DEBUG => 'DEBUG',
+    ];
+    $label = isset($labels[$level]) ? $labels[$level] : 'INFO';
+    $line  = sprintf('[%s] [%s] [%s] %s%s',
+        date('Y-m-d H:i:s'), $channel, $label, $msg, PHP_EOL);
+    $file  = sa_motorlease_log_path();
+    if (@file_put_contents($file, $line, FILE_APPEND | LOCK_EX) === false) {
+        error_log('[SA Motorlease][WRITE FAIL] ' . $msg);
     }
-    return $dir . 'vehicle-importer.log';
+}
+
+/**
+ * Auto-classify legacy messages that don't pass an explicit level. Errors and
+ * skips/failures map to ERROR/WARN so they pass the default threshold; the
+ * "✅ done" / "Updated X" success spam classifies as INFO and is dropped.
+ */
+function sa_motorlease_log_classify($msg) {
+    $s = strtolower((string)$msg);
+    if (strpos($s, '[error') !== false || strpos($s, 'fatal') !== false || strpos($s, 'exception') !== false) {
+        return SA_MOTORLEASE_LOG_ERROR;
+    }
+    if (
+        strpos($msg, '❌') !== false ||
+        strpos($s, 'failed')   !== false ||
+        strpos($s, 'error')    !== false ||
+        strpos($s, '[skip')    !== false ||
+        strpos($s, 'invalid')  !== false ||
+        strpos($s, 'wp_error') !== false ||
+        strpos($s, 'unable')   !== false ||
+        strpos($s, 'missing')  !== false ||
+        strpos($s, 'no images') !== false ||
+        strpos($s, 'not found') !== false ||
+        strpos($s, 'non-200')   !== false
+    ) {
+        return SA_MOTORLEASE_LOG_WARN;
+    }
+    return SA_MOTORLEASE_LOG_INFO;
+}
+
+/**
+ * Trim sa-motorlease.log to the last SA_MOTORLEASE_LOG_RETENTION_DAYS days.
+ * Cheap short-circuit if the first line is already within window.
+ */
+function sa_motorlease_log_rotate() {
+    $file = sa_motorlease_log_path();
+    if (!file_exists($file) || filesize($file) === 0) return;
+    $cutoff = strtotime('-' . (int)SA_MOTORLEASE_LOG_RETENTION_DAYS . ' days');
+    if ($cutoff === false) return;
+
+    // Peek at the first line; if it's already within window, nothing to do.
+    $peek = @fopen($file, 'r');
+    if (!$peek) return;
+    $first = fgets($peek);
+    fclose($peek);
+    if ($first && preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/', $first, $m)) {
+        if (strtotime($m[1]) >= $cutoff) return;
+    }
+
+    $tmp = $file . '.tmp';
+    $in  = @fopen($file, 'r');
+    $out = @fopen($tmp, 'w');
+    if (!$in || !$out) {
+        if ($in)  fclose($in);
+        if ($out) fclose($out);
+        return;
+    }
+    $keeping = false;
+    while (($line = fgets($in)) !== false) {
+        if (!$keeping && preg_match('/^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\]/', $line, $m)) {
+            if (strtotime($m[1]) < $cutoff) continue;
+            $keeping = true;
+        }
+        fputs($out, $line);
+    }
+    fclose($in);
+    fclose($out);
+
+    // Atomic-ish swap. Windows rename() fails when target exists.
+    if (PHP_OS_FAMILY === 'Windows' && file_exists($file)) @unlink($file);
+    @rename($tmp, $file);
+}
+
+add_action('sa_motorlease_log_rotate_daily', 'sa_motorlease_log_rotate');
+add_action('init', function () {
+    if (!wp_next_scheduled('sa_motorlease_log_rotate_daily')) {
+        wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'sa_motorlease_log_rotate_daily');
+    }
+});
+register_deactivation_hook(__FILE__, function () {
+    $ts = wp_next_scheduled('sa_motorlease_log_rotate_daily');
+    if ($ts) wp_unschedule_event($ts, 'sa_motorlease_log_rotate_daily');
+});
+
+// === Legacy logger shims (route everything through sa_motorlease_log) =======
+
+function vehicle_import_log_path() {
+    // Back-compat: external callers still resolve a path even though we no
+    // longer write to vehicle-importer.log. Return the new consolidated file.
+    return sa_motorlease_log_path();
 }
 
 function log_import_update($msg){
-    $file = vehicle_import_log_path();
-    $line = '[' . date('Y-m-d H:i:s') . '] ' . $msg . PHP_EOL;
-    if (@file_put_contents($file, $line, FILE_APPEND | LOCK_EX) === false) {
-        error_log('[Vehicle Import][WRITE FAIL] ' . $msg . ' (check permissions for: ' . $file . ')');
-    }
+    sa_motorlease_log('import', sa_motorlease_log_classify($msg), $msg);
 }
 
 function log_skip_product($sku, $reason, $extra = []){
-    $file = vehicle_import_log_path();
-    $line = '[' . date('Y-m-d H:i:s') . '] [SKIP ' . $sku . '] ' . $reason . ' ' . json_encode($extra) . PHP_EOL;
-    if (@file_put_contents($file, $line, FILE_APPEND | LOCK_EX) === false) {
-        error_log('[Vehicle Import][WRITE FAIL] [SKIP ' . $sku . '] ' . $reason . ' (check permissions for: ' . $file . ')');
-    }
+    $payload = '[SKIP ' . $sku . '] ' . $reason;
+    if (!empty($extra)) $payload .= ' ' . wp_json_encode($extra);
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, $payload);
 }
 
 // === Currency formatting =====================================================
@@ -1568,25 +1685,17 @@ add_action('init', function () {
     }
 });
 
-// === Image Repair Logger (separate file) ====================================
+// === Image Repair Logger (now routes through central logger) ================
 
 if (!function_exists('vehicle_image_repair_log_path')) {
     function vehicle_image_repair_log_path() {
-        if (!defined('VEHICLE_IMPORT_PLUGIN_FILE')) {
-            define('VEHICLE_IMPORT_PLUGIN_FILE', __FILE__);
-        }
-        $dir = plugin_dir_path(VEHICLE_IMPORT_PLUGIN_FILE);
-        if (substr($dir, -1) !== DIRECTORY_SEPARATOR) $dir .= DIRECTORY_SEPARATOR;
-        return $dir . 'vehicle-image-repair.log';
+        // Back-compat shim: external callers still get a valid path.
+        return sa_motorlease_log_path();
     }
 }
 if (!function_exists('log_image_repair')) {
     function log_image_repair($msg) {
-        $file = vehicle_image_repair_log_path();
-        $line = '[' . date('Y-m-d H:i:s') . '] ' . $msg . PHP_EOL;
-        if (@file_put_contents($file, $line, FILE_APPEND | LOCK_EX) === false) {
-            error_log('[Vehicle Image Repair][WRITE FAIL] ' . $msg . ' (check file perms: ' . $file . ')');
-        }
+        sa_motorlease_log('image-repair', sa_motorlease_log_classify($msg), $msg);
     }
 }
 
@@ -3044,15 +3153,13 @@ if ( ! function_exists('ensure_media_libs_loaded') ) {
 // --- Legacy loggers (log_to_file, log_update)
 // ---------------------------------------------------------------------------
 function log_to_file($message, $filename = 'import_log.log') {
-    $log_file = plugin_dir_path(__FILE__) . '/' . $filename;
-    $timestamp = date('Y-m-d H:i:s');
-    file_put_contents($log_file, "[$timestamp] $message\n", FILE_APPEND);
+    // Channel name comes from the legacy filename so existing greps stay useful.
+    $channel = preg_replace('/\.log$/', '', $filename) ?: 'import';
+    sa_motorlease_log($channel, sa_motorlease_log_classify($message), $message);
 }
 
 function log_update($message) {
-    $log_file = plugin_dir_path(__FILE__) . '/product_updates.log';
-    $timestamp = date("Y-m-d H:i:s");
-    file_put_contents($log_file, "[$timestamp] $message\n", FILE_APPEND);
+    sa_motorlease_log('product-updates', sa_motorlease_log_classify($message), $message);
 }
 
 // ---------------------------------------------------------------------------
@@ -3279,9 +3386,7 @@ function get_sold_products() {
 // --- License plate updater
 // ---------------------------------------------------------------------------
 function log_license_plate_update($message) {
-    $log_file = plugin_dir_path(__FILE__) . 'license_plate_update.log';
-    $timestamp = date('Y-m-d H:i:s');
-    file_put_contents($log_file, "[$timestamp] $message\n", FILE_APPEND);
+    sa_motorlease_log('license-plate', sa_motorlease_log_classify($message), $message);
 }
 
 // Update existing products with license plate attribute from live feed
@@ -3540,8 +3645,6 @@ add_action('rest_api_init', function () {
 });
 
 function samotorlease_qualify_lead( WP_REST_Request $request ) {
-    file_put_contents(__DIR__ . '/lead-debug.txt', "RECEIVED REQUEST\n", FILE_APPEND);
-
     global $wpdb;
     $table = $wpdb->prefix . 'lead_qualifications';
 
@@ -3587,14 +3690,10 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
         ]
     );
 
-    // Logging regardless of success
-    $log_file  = plugin_dir_path(__FILE__) . 'pace-api-response.log';
-    $log_entry = "[" . current_time('mysql') . "]\n";
-    $log_entry .= "Request Data:\n" . print_r($data, true) . "\n";
-
+    // Log only on error. Successful 200 with lead_id is silent.
     if (is_wp_error($response)) {
-        $log_entry .= "API ERROR:\n" . $response->get_error_message() . "\n\n";
-        file_put_contents($log_file, $log_entry, FILE_APPEND);
+        sa_motorlease_log('qualify-lead', SA_MOTORLEASE_LOG_ERROR,
+            'WP_Error from paceWebCreateLead: ' . $response->get_error_message());
         return new WP_REST_Response(['error' => 'API connection failed'], 500);
     }
 
@@ -3602,13 +3701,16 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     $raw_body    = wp_remote_retrieve_body($response);
     $body        = json_decode($raw_body, true);
 
-    $log_entry .= "HTTP Status: {$status_code}\n";
-    $log_entry .= "Raw Body:\n" . $raw_body . "\n";
-    $log_entry .= "Parsed:\n" . print_r($body, true) . "\n\n";
-    file_put_contents($log_file, $log_entry, FILE_APPEND);
+    if ($status_code < 200 || $status_code >= 300) {
+        sa_motorlease_log('qualify-lead', SA_MOTORLEASE_LOG_WARN,
+            sprintf('paceWebCreateLead HTTP %d body=%s', $status_code, substr($raw_body, 0, 1000)));
+    }
 
     if (empty($body['lead_id'])) {
         $upstream_msg = isset($body['message']) ? $body['message'] : 'unknown';
+        sa_motorlease_log('qualify-lead', SA_MOTORLEASE_LOG_WARN,
+            'paceWebCreateLead missing lead_id; upstream=' . $upstream_msg
+            . ' http=' . $status_code . ' body=' . substr($raw_body, 0, 500));
         return new WP_REST_Response([
             'error'    => 'Invalid API response (missing lead_id)',
             'upstream' => $upstream_msg,
@@ -3627,6 +3729,8 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     ]);
 
     if ($wpdb->last_error) {
+        sa_motorlease_log('qualify-lead', SA_MOTORLEASE_LOG_ERROR,
+            'lead_qualifications insert failed: ' . $wpdb->last_error);
         return new WP_REST_Response(['error' => $wpdb->last_error], 500);
     }
 
@@ -3711,16 +3815,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
         JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
     );
 
-    // 5) Log the exact JSON payload
-    $log_file = plugin_dir_path( __FILE__ ) . 'pace-api-update-response.log';
-    $time     = current_time( 'mysql' );
-    file_put_contents(
-        $log_file,
-        "[$time] JSON Payload:\n{$json_payload}\n\n",
-        FILE_APPEND
-    );
-
-    // 6) Send to external API
+    // 5) Send to external API
     $external = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebUpdateLead';
     //$external = 'https://paceapp-server-preview.azurewebsites.net/api/entity/paceWebUpdateLead';
     $response = wp_remote_post( $external, [
@@ -3729,18 +3824,20 @@ function gf5_forward_to_external_api( $entry, $form ) {
         'timeout' => 30,
     ] );
 
-    // 7) Log the response
+    // 6) Log only on error. Successful 2xx is silent.
+    $lead_id = (int) ( $payload['lead_id'] ?? 0 );
     if ( is_wp_error( $response ) ) {
-        $err = $response->get_error_message();
-        file_put_contents( $log_file, "WP_Error: {$err}\n\n", FILE_APPEND );
+        sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
+            sprintf( 'WP_Error from paceWebUpdateLead (lead_id=%d): %s',
+                $lead_id, $response->get_error_message() ) );
     } else {
-        $code    = wp_remote_retrieve_response_code( $response );
-        $headers = wp_remote_retrieve_headers( $response );
-        $body    = wp_remote_retrieve_body( $response );
-        $entry   = "[$time] HTTP {$code} RESPONSE\nHeaders:\n"
-                 . print_r( $headers, true )
-                 . "\nBody:\n{$body}\n\n";
-        file_put_contents( $log_file, $entry, FILE_APPEND );
+        $code = wp_remote_retrieve_response_code( $response );
+        if ( $code < 200 || $code >= 300 ) {
+            $body = wp_remote_retrieve_body( $response );
+            sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
+                sprintf( 'paceWebUpdateLead HTTP %d (lead_id=%d) body=%s',
+                    $code, $lead_id, substr( $body, 0, 1000 ) ) );
+        }
     }
 }
 
@@ -4416,23 +4513,13 @@ add_action('rest_api_init', function () {
 function samotorlease_handle_partial_save(WP_REST_Request $request) {
     $data = $request->get_json_params();
 
-    // Set log file in your plugin folder
-    $log_file = plugin_dir_path(__FILE__) . 'partial-save.log';
-    $time = current_time('mysql');
-
-    // Log the incoming request data
-    file_put_contents(
-        $log_file,
-        "[$time] Incoming partial-save:\n" . print_r($data, true) . "\n\n",
-        FILE_APPEND
-    );
-
     if (empty($data['lead_id'])) {
-        file_put_contents($log_file, "[$time] ❌ Missing lead_id\n\n", FILE_APPEND);
+        sa_motorlease_log('partial-save', SA_MOTORLEASE_LOG_WARN, 'Missing lead_id in incoming request.');
         return new WP_REST_Response(['error' => 'Missing lead ID'], 400);
     }
 
-    $json_payload = wp_json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    $lead_id      = (int) $data['lead_id'];
+    $json_payload = wp_json_encode($data, JSON_UNESCAPED_SLASHES);
 
     $external_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebUpdateLead';
     $response = wp_remote_post($external_url, [
@@ -4443,21 +4530,23 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
 
     if (is_wp_error($response)) {
         $error_message = $response->get_error_message();
-        file_put_contents($log_file, "[$time] ❌ WP_Error: {$error_message}\n\n", FILE_APPEND);
+        sa_motorlease_log('partial-save', SA_MOTORLEASE_LOG_ERROR,
+            sprintf('WP_Error from paceWebUpdateLead (lead_id=%d): %s', $lead_id, $error_message));
         return new WP_REST_Response(['error' => $error_message], 500);
     }
 
     $code = wp_remote_retrieve_response_code($response);
     $body = wp_remote_retrieve_body($response);
-    file_put_contents(
-        $log_file,
-        "[$time] ✅ External API Response: HTTP {$code}\n{$body}\n\n",
-        FILE_APPEND
-    );
+
+    if ($code < 200 || $code >= 300) {
+        sa_motorlease_log('partial-save', SA_MOTORLEASE_LOG_WARN,
+            sprintf('paceWebUpdateLead HTTP %d (lead_id=%d) body=%s',
+                $code, $lead_id, substr($body, 0, 1000)));
+    }
 
     return new WP_REST_Response([
-        'message' => 'Forwarded to external API',
-        'status' => $code,
+        'message'  => 'Forwarded to external API',
+        'status'   => $code,
         'response' => json_decode($body, true),
     ], $code);
 }
