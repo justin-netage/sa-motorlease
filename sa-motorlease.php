@@ -3846,7 +3846,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
     $upload  = wp_upload_dir();
     $baseurl = trailingslashit( $upload['baseurl'] );
     $basedir = trailingslashit( $upload['basedir'] );
-    $max_bytes = 10 * 1024 * 1024; // 10 MB per file
+    $max_bytes = 32 * 1024 * 1024; // 32 MB per file
 
     foreach ( [ 32, 33, 34 ] as $fid ) {
         $urls_string = rgar( $entry, (string) $fid );
