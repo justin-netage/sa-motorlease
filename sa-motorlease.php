@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.1
+ * Version: 2.2.2
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.1' );
+define( 'SA_MOTORLEASE_VERSION', '2.2.2' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -3591,7 +3591,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.2.0',                     // Version — bumped: SA ID validation for required id_number field
+            '1.2.1',                     // Version — bumped: looser SA phone validation (strip formatting)
             true                      // Load in footer
         );
     }
@@ -5145,8 +5145,11 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
         return 'Please enter a valid email address.';
     }
 
-    // Phone: same regex the JS uses, kept in sync.
-    if ( ! preg_match( '/^(0\d{9}|\+27\d{9}|\(0\d{2}\)\s?\d{3}[-\s]?\d{4})$/', (string) $data['cellphone_number'] ) ) {
+    // Phone: strip formatting, then accept either national (0XXXXXXXXX)
+    // or international (27XXXXXXXXX) digit shapes. Mirrors isValidSAPhone()
+    // in lead-qualification.js so client and server agree.
+    $phone_digits = preg_replace( '/\D+/', '', (string) $data['cellphone_number'] );
+    if ( ! preg_match( '/^(0\d{9}|27\d{9})$/', $phone_digits ) ) {
         return 'Please enter a valid SA phone number.';
     }
 

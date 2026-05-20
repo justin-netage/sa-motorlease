@@ -49,7 +49,15 @@ jQuery(function($){
   }
 
   // --- Validation helpers ---
-  const phoneRx = /^(0\d{9}|\+27\d{9}|\(0\d{2}\)\s?\d{3}[-\s]?\d{4})$/;
+  // South African mobile number: accept any input the user might paste — with
+  // spaces, dashes, parens, country code prefix, etc. — and validate the
+  // underlying digit string only. Two shapes are allowed:
+  //   national:      0XXXXXXXXX  (10 digits, leading 0)
+  //   international: 27XXXXXXXXX (11 digits, leading 27, with or without +)
+  function isValidSAPhone(s) {
+    const digits = String(s || '').replace(/\D+/g, '');
+    return /^0\d{9}$/.test(digits) || /^27\d{9}$/.test(digits);
+  }
   const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
   // South African ID: 13 digits with a mod-10 (Luhn-style) checksum.
@@ -302,7 +310,7 @@ jQuery(function($){
         let valid = true, msg = '';
         switch (fld.type) {
           case 'text':    valid = val.length > 0; msg = `${fld.name} is required.`; break;
-          case 'tel':     valid = phoneRx.test(val); msg = 'Please enter a valid SA phone number.'; break;
+          case 'tel':     valid = isValidSAPhone(val); msg = 'Please enter a valid SA phone number.'; break;
           case 'email':   valid = emailRx.test(val); msg = 'Please enter a valid email address.'; break;
           case 'id':
             if (!val.length) { valid = false; msg = `${fld.name} is required.`; }
