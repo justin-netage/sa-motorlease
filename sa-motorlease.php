@@ -1399,13 +1399,9 @@ function vi_create_new_products() {
         }
     }
 
-    // Trigger reindex
-    wbw_index_after_import_smart(60);
+    // Signal that a reindex is needed; the update cron (30 min later) will
+    // trigger the actual index pass. This avoids two heavy index runs per hour.
     update_option('vi_wbw_reindex_needed', time());
-    if (!wp_next_scheduled('wbw_custom_index_cron')) {
-        wp_schedule_single_event(time() + 60, 'wbw_custom_index_cron');
-        log_import_update('[WBW Index] Scheduled wbw_custom_index_cron in 60s.');
-    }
 
     $run_s = round((microtime(true) - $run_t0), 2);
     log_import_update("=== Create END — created={$created}, elapsed={$run_s}s ===");
