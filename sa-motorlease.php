@@ -4316,6 +4316,25 @@ add_action('update_number_of_payments_attribute', function () {
     $updated = 0;
     $skipped = 0;
 
+    // Fetch the feed once and index it by SKU.
+    $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData';
+    $feed_raw = file_get_contents($feed_url);
+    if (!$feed_raw) {
+        log_to_file("[Backfill] Failed to fetch feed", 'backfill_payments.log');
+        return;
+    }
+    $feed_data = json_decode($feed_raw, true);
+    if (!is_array($feed_data)) {
+        log_to_file("[Backfill] Failed to decode feed JSON", 'backfill_payments.log');
+        return;
+    }
+    $feed_by_sku = [];
+    foreach ($feed_data as $entry) {
+        if (isset($entry['id'])) {
+            $feed_by_sku[(string)$entry['id']] = $entry;
+        }
+    }
+
     $args = [
         'post_type'      => 'product',
         'post_status'    => 'publish',
@@ -4332,23 +4351,7 @@ add_action('update_number_of_payments_attribute', function () {
             continue;
         }
 
-        // Fetch full vehicle data from your original feed
-        $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData'; // 🔁 Replace with actual feed
-        $feed = file_get_contents($feed_url);
-        if (!$feed) {
-            log_to_file("[Backfill] Failed to fetch feed", 'backfill_payments.log');
-            break;
-        }
-
-        $data = json_decode($feed, true);
-        $vehicle = null;
-
-        foreach ($data as $entry) {
-            if (isset($entry['id']) && $entry['id'] == $sku) {
-                $vehicle = $entry;
-                break;
-            }
-        }
+        $vehicle = $feed_by_sku[(string)$sku] ?? null;
 
         if (!$vehicle || empty($vehicle['rebate_target'])) {
             $skipped++;
