@@ -3591,7 +3591,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.1.0',                     // Version — bumped: drop cookie, use localStorage (fix HTTP 431)
+            '1.2.0',                     // Version — bumped: SA ID validation for required id_number field
             true                      // Load in footer
         );
     }
@@ -3680,9 +3680,29 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
         'accept_terms'     => $to_bool( $request->get_param('accept_terms') ),
     ];
 
+    // Server-side validation. Belt-and-braces: the JS validator should already
+    // have blocked invalid submissions, but a direct POST (or stale cached JS)
+    // must not reach the PACE API with missing/invalid required fields.
+    $validation_error = sa_motorlease_validate_qualify_payload( $data );
+    if ( $validation_error !== null ) {
+        sa_motorlease_log( 'qualify-lead', SA_MOTORLEASE_LOG_WARN,
+            'Rejected before PACE: ' . $validation_error );
+        return new WP_REST_Response( [ 'error' => $validation_error ], 400 );
+    }
+
+    // Settings-driven kill switch — lets an admin pause posting to PACE
+    // without disabling the whole plugin (useful while debugging).
+    if ( ! sa_motorlease_pace_posting_enabled() ) {
+        sa_motorlease_log( 'qualify-lead', SA_MOTORLEASE_LOG_WARN,
+            'PACE posting disabled via settings; rejected lead submission.' );
+        return new WP_REST_Response( [
+            'error' => 'Lead submissions are temporarily disabled. Please try again later or contact us.',
+        ], 503 );
+    }
+
     // External API request
     $response = wp_remote_post(
-        'https://paceapp-server.azurewebsites.net/api/entity/paceWebCreateLead',
+        sa_motorlease_pace_base_url() . '/api/entity/paceWebCreateLead',
         [
             'headers' => ['Content-Type' => 'application/json'],
             'body'    => wp_json_encode($data),
@@ -3738,9 +3758,14 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
 }
 
 // ---------------------------------------------------------------------------
-// --- Gravity Form #5 forwarder
+// --- Gravity Form forwarder (default form ID 5; configurable in Settings)
 // ---------------------------------------------------------------------------
-add_action( 'gform_after_submission_5', 'gf5_forward_to_external_api', 10, 2 );
+add_action( 'init', function () {
+    $form_id = (int) sa_motorlease_get_setting( 'gf_forwarder_form_id', 5 );
+    if ( $form_id > 0 ) {
+        add_action( 'gform_after_submission_' . $form_id, 'gf5_forward_to_external_api', 10, 2 );
+    }
+}, 5 );
 function gf5_forward_to_external_api( $entry, $form ) {
 
     // 1) Build the base payload, casting lead_id to integer
@@ -3816,8 +3841,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
     );
 
     // 5) Send to external API
-    $external = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebUpdateLead';
-    //$external = 'https://paceapp-server-preview.azurewebsites.net/api/entity/paceWebUpdateLead';
+    $external = sa_motorlease_pace_base_url() . '/api/entity/paceWebUpdateLead';
     $response = wp_remote_post( $external, [
         'headers' => [ 'Content-Type' => 'application/json' ],
         'body'    => $json_payload,
@@ -4521,7 +4545,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
     $lead_id      = (int) $data['lead_id'];
     $json_payload = wp_json_encode($data, JSON_UNESCAPED_SLASHES);
 
-    $external_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebUpdateLead';
+    $external_url = sa_motorlease_pace_base_url() . '/api/entity/paceWebUpdateLead';
     $response = wp_remote_post($external_url, [
         'headers' => ['Content-Type' => 'application/json'],
         'body'    => $json_payload,
@@ -5002,4 +5026,463 @@ function infer_label_from_filename($filename) {
     }
 
     return null;
+}
+
+// ============================================================================
+// === SETTINGS + STATUS ADMIN UI =============================================
+// ============================================================================
+//
+// Single top-level admin menu "SA Motorlease" with two subpages:
+//   - Settings: stores plugin config in the single option sa_motorlease_settings
+//     (PACE base URL, kill switch, qualify form IDs, GF forwarder form ID,
+//     log level, log retention days).
+//   - Status: read-only diagnostics — versions, scheduled cron events,
+//     lead-qualifications table summary, log tail.
+//
+// Settings are read via sa_motorlease_get_setting() everywhere they matter;
+// constants defined at the top of the file continue to provide the same
+// defaults when the option is unset.
+
+const SA_MOTORLEASE_SETTINGS_OPTION = 'sa_motorlease_settings';
+const SA_MOTORLEASE_SETTINGS_SLUG   = 'sa-motorlease-settings';
+const SA_MOTORLEASE_STATUS_SLUG     = 'sa-motorlease-status';
+
+function sa_motorlease_default_settings() {
+    return [
+        'pace_base_url'        => 'https://paceapp-server.azurewebsites.net',
+        'pace_enabled'         => 1,
+        'qualify_form_ids'     => '1,3',
+        'gf_forwarder_form_id' => 5,
+        'log_level'            => SA_MOTORLEASE_LOG_WARN,
+        'log_retention_days'   => 21,
+    ];
+}
+
+function sa_motorlease_get_settings() {
+    $stored = get_option( SA_MOTORLEASE_SETTINGS_OPTION, [] );
+    if ( ! is_array( $stored ) ) $stored = [];
+    return array_merge( sa_motorlease_default_settings(), $stored );
+}
+
+function sa_motorlease_get_setting( $key, $fallback = null ) {
+    $s = sa_motorlease_get_settings();
+    return array_key_exists( $key, $s ) ? $s[ $key ] : $fallback;
+}
+
+function sa_motorlease_pace_base_url() {
+    $url = (string) sa_motorlease_get_setting( 'pace_base_url', 'https://paceapp-server.azurewebsites.net' );
+    return untrailingslashit( $url );
+}
+
+function sa_motorlease_pace_posting_enabled() {
+    return (bool) sa_motorlease_get_setting( 'pace_enabled', 1 );
+}
+
+/**
+ * Validate the qualify-lead payload before it leaves us for the PACE API.
+ * Returns null if valid, or a human-readable error message describing the
+ * first problem. Messages are intentionally short — the JS surfaces them
+ * verbatim to the user via the form's error banner.
+ */
+function sa_motorlease_validate_qualify_payload( array $data ) {
+    $required_text = [
+        'name'             => 'First name',
+        'surname'          => 'Surname',
+        'cellphone_number' => 'Phone',
+        'your_email'       => 'Email',
+        'location'         => 'Location',
+        'take_home'        => 'Take-home pay',
+    ];
+    foreach ( $required_text as $key => $label ) {
+        if ( ! isset( $data[ $key ] ) || trim( (string) $data[ $key ] ) === '' ) {
+            return $label . ' is required.';
+        }
+    }
+
+    $id = isset( $data['id_number'] ) ? trim( (string) $data['id_number'] ) : '';
+    if ( $id === '' ) {
+        return 'ID Number is required.';
+    }
+    if ( ! preg_match( '/^\d{13}$/', $id ) ) {
+        return 'ID Number must be 13 digits.';
+    }
+    if ( ! sa_motorlease_is_valid_sa_id( $id ) ) {
+        return 'Please enter a valid South African ID Number.';
+    }
+
+    if ( ! is_email( $data['your_email'] ) ) {
+        return 'Please enter a valid email address.';
+    }
+
+    // Phone: same regex the JS uses, kept in sync.
+    if ( ! preg_match( '/^(0\d{9}|\+27\d{9}|\(0\d{2}\)\s?\d{3}[-\s]?\d{4})$/', (string) $data['cellphone_number'] ) ) {
+        return 'Please enter a valid SA phone number.';
+    }
+
+    if ( empty( $data['accept_terms'] ) ) {
+        return 'You must accept the terms.';
+    }
+
+    // "Other" location selected → other_location text must be filled in.
+    if ( strcasecmp( trim( (string) $data['location'] ), 'Other' ) === 0
+         && trim( (string) ( $data['other_location'] ?? '' ) ) === '' ) {
+        return 'Please tell us where you are based.';
+    }
+
+    return null;
+}
+
+/**
+ * SA ID Luhn-style mod-10 checksum, mirroring the JS isValidSAID().
+ */
+function sa_motorlease_is_valid_sa_id( $id ) {
+    if ( ! preg_match( '/^\d{13}$/', (string) $id ) ) return false;
+    $sum = 0;
+    for ( $i = 0; $i < 13; $i++ ) {
+        $d = (int) $id[ $i ];
+        if ( $i % 2 === 1 ) {
+            $d *= 2;
+            if ( $d > 9 ) $d -= 9;
+        }
+        $sum += $d;
+    }
+    return ( $sum % 10 ) === 0;
+}
+
+// --- Admin menu -------------------------------------------------------------
+
+add_action( 'admin_menu', function () {
+    add_menu_page(
+        'SA Motorlease',
+        'SA Motorlease',
+        'manage_options',
+        SA_MOTORLEASE_SETTINGS_SLUG,
+        'sa_motorlease_render_settings_page',
+        'dashicons-car',
+        58
+    );
+    add_submenu_page(
+        SA_MOTORLEASE_SETTINGS_SLUG,
+        'SA Motorlease Settings',
+        'Settings',
+        'manage_options',
+        SA_MOTORLEASE_SETTINGS_SLUG,
+        'sa_motorlease_render_settings_page'
+    );
+    add_submenu_page(
+        SA_MOTORLEASE_SETTINGS_SLUG,
+        'SA Motorlease Status',
+        'Status',
+        'manage_options',
+        SA_MOTORLEASE_STATUS_SLUG,
+        'sa_motorlease_render_status_page'
+    );
+} );
+
+// --- Settings registration --------------------------------------------------
+
+add_action( 'admin_init', function () {
+    register_setting(
+        SA_MOTORLEASE_SETTINGS_OPTION,
+        SA_MOTORLEASE_SETTINGS_OPTION,
+        [
+            'type'              => 'array',
+            'sanitize_callback' => 'sa_motorlease_sanitize_settings',
+            'default'           => sa_motorlease_default_settings(),
+        ]
+    );
+
+    add_settings_section(
+        'sa_motorlease_section_pace',
+        'PACE API',
+        function () {
+            echo '<p>Endpoint the plugin posts lead and application data to. Toggle posting off to stop reaching the PACE server without disabling the plugin.</p>';
+        },
+        SA_MOTORLEASE_SETTINGS_SLUG
+    );
+    add_settings_section(
+        'sa_motorlease_section_forms',
+        'Gravity Forms',
+        function () {
+            echo '<p>Which Gravity Forms the plugin watches. The qualify form IDs are the lead-qualification forms (default 1 and 3). The forwarder form ID is the apply-now form (default 5) whose submissions are sent on to PACE.</p>';
+        },
+        SA_MOTORLEASE_SETTINGS_SLUG
+    );
+    add_settings_section(
+        'sa_motorlease_section_logging',
+        'Logging',
+        function () {
+            echo '<p>Threshold and retention for <code>sa-motorlease.log</code>. Lower numeric levels are more important — ERROR (10) is always written, DEBUG (40) is the loudest.</p>';
+        },
+        SA_MOTORLEASE_SETTINGS_SLUG
+    );
+
+    $f = function ( $id, $title, $cb, $section ) {
+        add_settings_field( $id, $title, $cb, SA_MOTORLEASE_SETTINGS_SLUG, $section );
+    };
+
+    $f( 'pace_base_url', 'PACE base URL', 'sa_motorlease_field_pace_base_url',   'sa_motorlease_section_pace' );
+    $f( 'pace_enabled',  'Post to PACE',  'sa_motorlease_field_pace_enabled',    'sa_motorlease_section_pace' );
+
+    $f( 'qualify_form_ids',     'Qualify form IDs',  'sa_motorlease_field_qualify_form_ids',     'sa_motorlease_section_forms' );
+    $f( 'gf_forwarder_form_id', 'Forwarder form ID', 'sa_motorlease_field_gf_forwarder_form_id', 'sa_motorlease_section_forms' );
+
+    $f( 'log_level',          'Log level',           'sa_motorlease_field_log_level',          'sa_motorlease_section_logging' );
+    $f( 'log_retention_days', 'Log retention days',  'sa_motorlease_field_log_retention_days', 'sa_motorlease_section_logging' );
+} );
+
+function sa_motorlease_sanitize_settings( $input ) {
+    $defaults = sa_motorlease_default_settings();
+    $out      = sa_motorlease_get_settings(); // start from current stored values
+
+    if ( isset( $input['pace_base_url'] ) ) {
+        $url = esc_url_raw( trim( (string) $input['pace_base_url'] ) );
+        $out['pace_base_url'] = $url !== '' ? untrailingslashit( $url ) : $defaults['pace_base_url'];
+    }
+
+    $out['pace_enabled'] = ! empty( $input['pace_enabled'] ) ? 1 : 0;
+
+    if ( isset( $input['qualify_form_ids'] ) ) {
+        $ids = array_filter( array_map( 'intval',
+            array_map( 'trim', explode( ',', (string) $input['qualify_form_ids'] ) )
+        ) );
+        $out['qualify_form_ids'] = $ids ? implode( ',', $ids ) : $defaults['qualify_form_ids'];
+    }
+
+    if ( isset( $input['gf_forwarder_form_id'] ) ) {
+        $out['gf_forwarder_form_id'] = max( 0, (int) $input['gf_forwarder_form_id'] );
+    }
+
+    if ( isset( $input['log_level'] ) ) {
+        $lvl = (int) $input['log_level'];
+        $out['log_level'] = in_array( $lvl, [ 10, 20, 30, 40 ], true ) ? $lvl : $defaults['log_level'];
+    }
+
+    if ( isset( $input['log_retention_days'] ) ) {
+        $out['log_retention_days'] = max( 1, min( 365, (int) $input['log_retention_days'] ) );
+    }
+
+    return $out;
+}
+
+// --- Settings field renderers ----------------------------------------------
+
+function sa_motorlease_field_pace_base_url() {
+    $val = esc_attr( sa_motorlease_get_setting( 'pace_base_url' ) );
+    printf(
+        '<input type="url" class="regular-text code" name="%s[pace_base_url]" value="%s" placeholder="https://paceapp-server.azurewebsites.net">',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
+    );
+    echo '<p class="description">No trailing slash. Use the preview host (<code>https://paceapp-server-preview.azurewebsites.net</code>) to test changes against the staging API.</p>';
+}
+
+function sa_motorlease_field_pace_enabled() {
+    $on = (bool) sa_motorlease_get_setting( 'pace_enabled' );
+    printf(
+        '<label><input type="checkbox" name="%s[pace_enabled]" value="1" %s> Send lead submissions to PACE</label>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), checked( $on, true, false )
+    );
+    echo '<p class="description">Uncheck to stop the <code>/qualify-lead</code> endpoint from posting outbound. Users will see a "temporarily disabled" message.</p>';
+}
+
+function sa_motorlease_field_qualify_form_ids() {
+    $val = esc_attr( sa_motorlease_get_setting( 'qualify_form_ids' ) );
+    printf(
+        '<input type="text" class="regular-text code" name="%s[qualify_form_ids]" value="%s" placeholder="1,3">',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
+    );
+    echo '<p class="description">Comma-separated Gravity Form IDs that run the lead-qualification JS. The JS itself still maps each form\'s individual input IDs; this list is informational/status-only at the moment.</p>';
+}
+
+function sa_motorlease_field_gf_forwarder_form_id() {
+    $val = (int) sa_motorlease_get_setting( 'gf_forwarder_form_id' );
+    printf(
+        '<input type="number" class="small-text" name="%s[gf_forwarder_form_id]" value="%d" min="0" step="1">',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
+    );
+    echo '<p class="description">The form whose <code>gform_after_submission_{ID}</code> hook forwards its data to <code>paceWebUpdateLead</code>. Set to 0 to disable forwarding entirely.</p>';
+}
+
+function sa_motorlease_field_log_level() {
+    $val     = (int) sa_motorlease_get_setting( 'log_level' );
+    $choices = [ 10 => 'ERROR', 20 => 'WARN', 30 => 'INFO', 40 => 'DEBUG' ];
+    echo '<select name="' . esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ) . '[log_level]">';
+    foreach ( $choices as $k => $label ) {
+        printf( '<option value="%d" %s>%s (%d)</option>',
+            $k, selected( $val, $k, false ), esc_html( $label ), $k );
+    }
+    echo '</select>';
+    echo '<p class="description">Note: the <code>SA_MOTORLEASE_LOG_LEVEL</code> constant defined at the top of the plugin file takes precedence over this setting when present.</p>';
+}
+
+function sa_motorlease_field_log_retention_days() {
+    $val = (int) sa_motorlease_get_setting( 'log_retention_days' );
+    printf(
+        '<input type="number" class="small-text" name="%s[log_retention_days]" value="%d" min="1" max="365" step="1"> days',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
+    );
+    echo '<p class="description">The daily rotate job trims log lines older than this. The constant <code>SA_MOTORLEASE_LOG_RETENTION_DAYS</code>, if defined, takes precedence.</p>';
+}
+
+// --- Settings page renderer -------------------------------------------------
+
+function sa_motorlease_render_settings_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+    ?>
+    <div class="wrap">
+        <h1>SA Motorlease — Settings</h1>
+        <form action="options.php" method="post">
+            <?php
+            settings_fields( SA_MOTORLEASE_SETTINGS_OPTION );
+            do_settings_sections( SA_MOTORLEASE_SETTINGS_SLUG );
+            submit_button();
+            ?>
+        </form>
+    </div>
+    <?php
+}
+
+// --- Status page renderer ---------------------------------------------------
+
+function sa_motorlease_render_status_page() {
+    if ( ! current_user_can( 'manage_options' ) ) return;
+
+    global $wpdb;
+    $settings   = sa_motorlease_get_settings();
+    $log_path   = sa_motorlease_log_path();
+    $log_size   = file_exists( $log_path ) ? size_format( filesize( $log_path ) ) : '—';
+    $log_mtime  = file_exists( $log_path ) ? date_i18n( 'Y-m-d H:i:s', filemtime( $log_path ) ) : '—';
+
+    $cron_hooks = [
+        'sa_motorlease_log_rotate_daily'   => 'Log rotation (daily)',
+        'vi_create_hourly_event'           => 'Vehicle create (hourly)',
+        'vi_update_hourly_event'           => 'Vehicle update (hourly)',
+        'vehicle_images_repair_event'      => 'Image repair (hourly)',
+        'vi_image_sync_cron'               => 'Image sync (5 min)',
+        'wbw_custom_index_cron'            => 'WBW reindex',
+        'set_sold_date_cron_event'         => 'Set sold date (daily)',
+        'delete_expired_sold_products_event'=> 'Delete expired sold (daily)',
+        'fix_and_replace_broken_images'    => 'Fix broken images',
+        'update_number_of_payments_attribute' => 'Update # of payments',
+    ];
+
+    $lead_table  = $wpdb->prefix . 'lead_qualifications';
+    $lead_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $lead_table ) ) === $lead_table;
+    $lead_count  = $lead_exists ? (int) $wpdb->get_var( "SELECT COUNT(*) FROM `$lead_table`" ) : 0;
+    $lead_latest = $lead_exists ? $wpdb->get_row( "SELECT lead_id, state, created_at FROM `$lead_table` ORDER BY id DESC LIMIT 1" ) : null;
+
+    // Tail the log (last ~50 lines) without loading the entire file.
+    $log_tail = '';
+    if ( file_exists( $log_path ) && filesize( $log_path ) > 0 ) {
+        $log_tail = sa_motorlease_tail_file( $log_path, 50 );
+    }
+
+    $pace_base = sa_motorlease_pace_base_url();
+    ?>
+    <div class="wrap">
+        <h1>SA Motorlease — Status</h1>
+
+        <h2 class="title">Environment</h2>
+        <table class="widefat striped" style="max-width:900px">
+            <tbody>
+                <tr><th style="width:240px">Plugin version</th><td><code><?php echo esc_html( SA_MOTORLEASE_VERSION ); ?></code></td></tr>
+                <tr><th>WordPress</th><td><?php echo esc_html( get_bloginfo( 'version' ) ); ?></td></tr>
+                <tr><th>PHP</th><td><?php echo esc_html( PHP_VERSION ); ?></td></tr>
+                <tr><th>WooCommerce</th><td><?php echo class_exists( 'WooCommerce' ) ? esc_html( WC()->version ) : 'not active'; ?></td></tr>
+                <tr><th>Gravity Forms</th><td><?php
+                    if ( class_exists( 'GFForms' ) && property_exists( 'GFForms', 'version' ) ) {
+                        echo esc_html( GFForms::$version );
+                    } elseif ( class_exists( 'GFCommon' ) && property_exists( 'GFCommon', 'version' ) ) {
+                        echo esc_html( GFCommon::$version );
+                    } else {
+                        echo class_exists( 'GFForms' ) ? 'active' : 'not active';
+                    }
+                ?></td></tr>
+            </tbody>
+        </table>
+
+        <h2 class="title">Effective configuration</h2>
+        <table class="widefat striped" style="max-width:900px">
+            <tbody>
+                <tr><th style="width:240px">PACE base URL</th><td><code><?php echo esc_html( $pace_base ); ?></code></td></tr>
+                <tr><th>PACE posting</th><td><?php echo sa_motorlease_pace_posting_enabled() ? '<span style="color:#137333">enabled</span>' : '<span style="color:#b91c1c">disabled</span>'; ?></td></tr>
+                <tr><th>Qualify form IDs</th><td><code><?php echo esc_html( $settings['qualify_form_ids'] ); ?></code></td></tr>
+                <tr><th>Forwarder form ID</th><td><code><?php echo (int) $settings['gf_forwarder_form_id']; ?></code> (hook: <code>gform_after_submission_<?php echo (int) $settings['gf_forwarder_form_id']; ?></code>)</td></tr>
+                <tr><th>Log level</th><td><?php echo (int) SA_MOTORLEASE_LOG_LEVEL; ?> (constant) / <?php echo (int) $settings['log_level']; ?> (setting)</td></tr>
+                <tr><th>Log retention</th><td><?php echo (int) SA_MOTORLEASE_LOG_RETENTION_DAYS; ?> days (constant) / <?php echo (int) $settings['log_retention_days']; ?> days (setting)</td></tr>
+            </tbody>
+        </table>
+
+        <h2 class="title">Lead qualifications</h2>
+        <table class="widefat striped" style="max-width:900px">
+            <tbody>
+                <tr><th style="width:240px">Table</th><td><code><?php echo esc_html( $lead_table ); ?></code> <?php echo $lead_exists ? '' : '<span style="color:#b91c1c">(missing)</span>'; ?></td></tr>
+                <tr><th>Rows</th><td><?php echo number_format_i18n( $lead_count ); ?></td></tr>
+                <?php if ( $lead_latest ) : ?>
+                    <tr><th>Latest lead</th><td>#<?php echo (int) $lead_latest->lead_id; ?> · state <code><?php echo esc_html( $lead_latest->state ); ?></code> · <?php echo esc_html( $lead_latest->created_at ); ?></td></tr>
+                <?php endif; ?>
+            </tbody>
+        </table>
+
+        <h2 class="title">Scheduled events</h2>
+        <table class="widefat striped" style="max-width:900px">
+            <thead><tr><th>Hook</th><th>Description</th><th>Next run</th></tr></thead>
+            <tbody>
+            <?php foreach ( $cron_hooks as $hook => $label ) :
+                $ts = wp_next_scheduled( $hook );
+                $when = $ts ? date_i18n( 'Y-m-d H:i:s', $ts ) . ' (' . human_time_diff( time(), $ts ) . ')' : '<em>not scheduled</em>';
+            ?>
+                <tr>
+                    <td><code><?php echo esc_html( $hook ); ?></code></td>
+                    <td><?php echo esc_html( $label ); ?></td>
+                    <td><?php echo wp_kses_post( $when ); ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+
+        <h2 class="title">Log file</h2>
+        <p>
+            <code><?php echo esc_html( $log_path ); ?></code>
+            — size <strong><?php echo esc_html( $log_size ); ?></strong>,
+            last write <strong><?php echo esc_html( $log_mtime ); ?></strong>
+        </p>
+        <?php if ( $log_tail !== '' ) : ?>
+            <pre style="background:#0d1117;color:#c9d1d9;padding:14px;border-radius:6px;max-height:360px;overflow:auto;font-size:12px;line-height:1.5;"><?php echo esc_html( $log_tail ); ?></pre>
+        <?php else : ?>
+            <p><em>Log file is empty or not yet written.</em></p>
+        <?php endif; ?>
+    </div>
+    <?php
+}
+
+/**
+ * Return the last $lines lines of a file by reading from the end in chunks.
+ * Safe for multi-MB log files — avoids loading the entire file into memory.
+ */
+function sa_motorlease_tail_file( $file, $lines = 50 ) {
+    $fh = @fopen( $file, 'rb' );
+    if ( ! $fh ) return '';
+
+    $buffer = '';
+    $chunk  = 4096;
+    $pos    = -1;
+    $lc     = 0;
+
+    fseek( $fh, 0, SEEK_END );
+    $filesize = ftell( $fh );
+    if ( $filesize === 0 ) { fclose( $fh ); return ''; }
+
+    while ( -$pos < $filesize && $lc <= $lines ) {
+        $read = min( $chunk, $filesize + $pos + 1 );
+        fseek( $fh, $pos - $read + 1, SEEK_END );
+        $buffer = fread( $fh, $read ) . $buffer;
+        $pos   -= $read;
+        $lc     = substr_count( $buffer, "\n" );
+    }
+    fclose( $fh );
+
+    $out = explode( "\n", $buffer );
+    if ( count( $out ) > $lines ) $out = array_slice( $out, -$lines );
+    return implode( "\n", $out );
 }
