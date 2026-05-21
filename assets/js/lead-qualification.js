@@ -326,7 +326,44 @@ jQuery(function($){
       if (_vfTimer) clearTimeout(_vfTimer);
       _vfTimer = setTimeout(validateAllFields, 60);
     };
-    form.on('input change', 'input, select, textarea', validateDebounced);
+    // Cover normal typing/changes plus blur/focus (browser autofill in
+    // Chrome/Safari often does NOT fire input/change, but does trigger
+    // focus/blur as the user tabs through or clicks the form).
+    form.on('input change blur focusin focusout animationstart', 'input, select, textarea', validateDebounced);
+
+    // Autofill detection (Chrome/Safari/Edge): the browser applies the
+    // :-webkit-autofill pseudo-class, which we tie to a no-op CSS animation
+    // so an animationstart event fires when autofill runs. Inject the CSS
+    // once per page.
+    if (!document.getElementById('sa-autofill-detect-style')) {
+      const style = document.createElement('style');
+      style.id = 'sa-autofill-detect-style';
+      style.textContent = `
+        @keyframes sa-autofill-start { from {} to {} }
+        @keyframes sa-autofill-cancel { from {} to {} }
+        input:-webkit-autofill { animation-name: sa-autofill-start; animation-duration: 1ms; }
+        input:not(:-webkit-autofill) { animation-name: sa-autofill-cancel; animation-duration: 1ms; }
+      `;
+      document.head.appendChild(style);
+    }
+    // Native listener as backup — jQuery delegation for animationstart
+    // can be unreliable across older WebKit versions.
+    form[0].addEventListener('animationstart', (ev) => {
+      if (ev.animationName === 'sa-autofill-start') validateDebounced();
+    }, true);
+
+    // Poll briefly after load to catch autofill that bypasses every event
+    // (some password managers, some mobile browsers). We stop once we've
+    // had a stable read or after a short window.
+    let _pollCount = 0;
+    const _pollMax = 20; // ~3s at 150ms
+    const _pollTimer = setInterval(() => {
+      validateAllFields();
+      if (++_pollCount >= _pollMax) clearInterval(_pollTimer);
+    }, 150);
+    // First real user interaction stops the poll early — by then any
+    // autofill has already happened.
+    form.one('pointerdown keydown', () => clearInterval(_pollTimer));
 
     if (window.gform && gform.addAction) {
       gform.addAction('gform_post_conditional_logic', formId => {
@@ -342,6 +379,10 @@ jQuery(function($){
     }
 
     validateAllFields(); // initial
+    // Re-run shortly after load: autofill commonly arrives a frame or two
+    // after DOM ready, so a single deferred re-check catches the common case.
+    setTimeout(validateAllFields, 250);
+    $(window).on('pageshow', validateAllFields); // bfcache restores
 
     // --- Submit handler ---
     form.on('submit', function(e){
