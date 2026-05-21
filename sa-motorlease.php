@@ -3717,7 +3717,7 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     if (is_wp_error($response)) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_ERROR,
             sprintf('WP_Error from paceWebCreateLead: %s request=%s',
-                $response->get_error_message(), wp_json_encode( $data )));
+                $response->get_error_message(), sa_motorlease_log_truncate( wp_json_encode( $data ) )));
         return new WP_REST_Response(['error' => 'API connection failed'], 500);
     }
 
@@ -3728,14 +3728,14 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     if ($status_code < 200 || $status_code >= 300) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
             sprintf('paceWebCreateLead HTTP %d request=%s response=%s',
-                $status_code, wp_json_encode( $data ), substr($raw_body, 0, 1000)));
+                $status_code, sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
     }
 
     if (empty($body['lead_id'])) {
         $upstream_msg = isset($body['message']) ? $body['message'] : 'unknown';
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
             sprintf('paceWebCreateLead missing lead_id; upstream=%s http=%d request=%s response=%s',
-                $upstream_msg, $status_code, wp_json_encode( $data ), substr($raw_body, 0, 1000)));
+                $upstream_msg, $status_code, sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
         return new WP_REST_Response([
             'error'    => 'Invalid API response (missing lead_id)',
             'upstream' => $upstream_msg,
@@ -3882,7 +3882,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
         sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
             sprintf( 'WP_Error from paceWebUpdateLead (lead_id=%d): %s request=%s',
                 $lead_id, $response->get_error_message(),
-                wp_json_encode( $loggable_payload ) ) );
+                sa_motorlease_log_truncate( wp_json_encode( $loggable_payload ) ) ) );
     } else {
         $code = wp_remote_retrieve_response_code( $response );
         $body = wp_remote_retrieve_body( $response );
@@ -3890,7 +3890,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
             sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
                 sprintf( 'paceWebUpdateLead HTTP %d (lead_id=%d) request=%s response=%s',
                     $code, $lead_id,
-                    wp_json_encode( $loggable_payload ),
+                    sa_motorlease_log_truncate( wp_json_encode( $loggable_payload ) ),
                     substr( $body, 0, 1000 ) ) );
         } else {
             sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_INFO,
@@ -4596,7 +4596,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
         $error_message = $response->get_error_message();
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_ERROR,
             sprintf('WP_Error from paceWebUpdateLead (lead_id=%d): %s request=%s',
-                $lead_id, $error_message, $json_payload));
+                $lead_id, $error_message, sa_motorlease_log_truncate( $json_payload )));
         return new WP_REST_Response(['error' => $error_message], 500);
     }
 
@@ -4606,7 +4606,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
     if ($code < 200 || $code >= 300) {
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_WARN,
             sprintf('paceWebUpdateLead HTTP %d (lead_id=%d) request=%s response=%s',
-                $code, $lead_id, $json_payload, substr($body, 0, 1000)));
+                $code, $lead_id, sa_motorlease_log_truncate( $json_payload ), substr($body, 0, 1000)));
     } else {
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_INFO,
             sprintf('OK lead_id=%d http=%d response=%s',
@@ -5226,6 +5226,19 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
 // the user actually sent when something goes wrong. Retention (default 21
 // days) limits exposure of the raw PII window.
 
+/**
+ * Truncate a string destined for a log line so a single WARN/ERROR entry
+ * can't carry a multi-MB payload into sa-motorlease.log. The Status page
+ * tails this file and an unbounded line would force it to allocate a huge
+ * buffer just to find the surrounding lines.
+ */
+function sa_motorlease_log_truncate( $s, $max = 4096 ) {
+    $s   = (string) $s;
+    $len = strlen( $s );
+    if ( $len <= $max ) return $s;
+    return substr( $s, 0, $max ) . sprintf( '… (truncated, %d of %d bytes shown)', $max, $len );
+}
+
 function sa_motorlease_log_lead( $channel, $level, $msg ) {
     static $labels = [
         SA_MOTORLEASE_LOG_ERROR => 'ERROR',
@@ -5529,7 +5542,10 @@ function sa_motorlease_render_status_page() {
     $lead_tail     = '';
     $lead_counts   = [ 'ERROR' => 0, 'WARN' => 0, 'INFO' => 0 ];
     if ( file_exists( $log_path ) && filesize( $log_path ) > 0 ) {
-        $bigger    = sa_motorlease_tail_file( $log_path, 2000 );
+        // 1 MB cap on the bytes we read for the channel-filter view. Plenty
+        // for thousands of normal log lines; a hard ceiling against tail
+        // having to allocate a 50+ MB buffer when WARN entries are fat.
+        $bigger    = sa_motorlease_tail_file( $log_path, 2000, 1048576 );
         $matched   = [];
         foreach ( preg_split( '/\r?\n/', $bigger ) as $line ) {
             if ( $line === '' ) continue;
@@ -5644,30 +5660,32 @@ function sa_motorlease_render_status_page() {
 }
 
 /**
- * Return the last $lines lines of a file by reading from the end in chunks.
- * Safe for multi-MB log files — avoids loading the entire file into memory.
+ * Return the last $lines lines of a file, reading at most $max_bytes from the
+ * end in a single fread. The byte cap is the safety net — large log files
+ * with very long lines (e.g. WARN entries that dump full request payloads)
+ * could otherwise force a line-count-driven tail to read tens of MB and OOM
+ * the Status page render.
  */
-function sa_motorlease_tail_file( $file, $lines = 50 ) {
+function sa_motorlease_tail_file( $file, $lines = 50, $max_bytes = 262144 ) {
     $fh = @fopen( $file, 'rb' );
     if ( ! $fh ) return '';
-
-    $buffer = '';
-    $chunk  = 4096;
-    $pos    = -1;
-    $lc     = 0;
 
     fseek( $fh, 0, SEEK_END );
     $filesize = ftell( $fh );
     if ( $filesize === 0 ) { fclose( $fh ); return ''; }
 
-    while ( -$pos < $filesize && $lc <= $lines ) {
-        $read = min( $chunk, $filesize + $pos + 1 );
-        fseek( $fh, $pos - $read + 1, SEEK_END );
-        $buffer = fread( $fh, $read ) . $buffer;
-        $pos   -= $read;
-        $lc     = substr_count( $buffer, "\n" );
-    }
+    $read = (int) min( $filesize, max( 1024, $max_bytes ) );
+    fseek( $fh, -$read, SEEK_END );
+    $buffer = fread( $fh, $read );
     fclose( $fh );
+    if ( $buffer === false || $buffer === '' ) return '';
+
+    // If we didn't read from the start of the file, drop the (likely partial)
+    // first line so we don't return a fragment.
+    if ( $read < $filesize ) {
+        $nl = strpos( $buffer, "\n" );
+        if ( $nl !== false ) $buffer = substr( $buffer, $nl + 1 );
+    }
 
     $out = explode( "\n", $buffer );
     if ( count( $out ) > $lines ) $out = array_slice( $out, -$lines );
