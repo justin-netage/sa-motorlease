@@ -60,11 +60,11 @@ jQuery(function($){
   }
   const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  // South African ID: format-only check (13 digits). PACE itself does the
-  // deeper validation against the Home Affairs database, so we deliberately
-  // don't run a client-side Luhn checksum here — it was rejecting real IDs
-  // for users in the wild.
-  const idRx = /^\d{13}$/;
+  // ID/Passport: 6-13 alphanumeric characters. Covers SA IDs (13 digits),
+  // SA passports (9 alphanumeric), and most international passports (6-9
+  // alphanumeric). PACE runs the authoritative validation against Home
+  // Affairs / passport databases on its end, so this is format-only.
+  const idRx = /^[A-Za-z0-9]{6,13}$/;
 
   // --- Prefill helpers for booleans -> selects ---
   function setYesNoSelectFromBool($select, boolVal){
@@ -104,7 +104,7 @@ jQuery(function($){
       fields: [
         { sel:'#input_1_1_3',   name:'First Name',     type:'text'     },
         { sel:'#input_1_1_6',   name:'Surname',        type:'text'     },
-        { sel:'#input_1_18',    name:'ID Number',      type:'id'       },
+        { sel:'#input_1_18',    name:'ID/Passport',    type:'id'       },
         { sel:'#input_1_3',     name:'Phone',          type:'tel'      },
         { sel:'#input_1_4',     name:'Email',          type:'email'    },
         { sel:'#input_1_6',     name:'Location',       type:'select'   },
@@ -121,7 +121,7 @@ jQuery(function($){
       fields: [
         { sel:'#input_3_1_3',   name:'First Name',     type:'text'     },
         { sel:'#input_3_1_6',   name:'Surname',        type:'text'     },
-        { sel:'#input_3_11',    name:'ID Number',      type:'id'       },
+        { sel:'#input_3_11',    name:'ID/Passport',    type:'id'       },
         { sel:'#input_3_3',     name:'Phone',          type:'tel'      },
         { sel:'#input_3_4',     name:'Email',          type:'email'    },
         { sel:'#input_3_5',     name:'Location',       type:'select'   },
@@ -302,7 +302,7 @@ jQuery(function($){
           case 'email':   valid = emailRx.test(val); msg = 'Please enter a valid email address.'; break;
           case 'id':
             if (!val.length) { valid = false; msg = `${fld.name} is required.`; }
-            else if (!idRx.test(val)) { valid = false; msg = 'ID Number must be 13 digits.'; }
+            else if (!idRx.test(val)) { valid = false; msg = 'ID/Passport must be 6-13 letters or digits.'; }
             break;
           case 'select':  valid = val !== ''; msg = `Please select a ${fld.name.toLowerCase()}.`; break;
           case 'checkbox':valid = val === true; msg = 'You must accept the terms.'; break;

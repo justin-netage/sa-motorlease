@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.5
+ * Version: 2.2.6
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.5' );
+define( 'SA_MOTORLEASE_VERSION', '2.2.6' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -3591,7 +3591,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.2.3',                     // Version — bumped: re-validate on browser autofill
+            '1.2.4',                     // Version — bumped: accept passport numbers (6-13 alphanumeric)
             true                      // Load in footer
         );
     }
@@ -5177,13 +5177,15 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
 
     $id = isset( $data['id_number'] ) ? trim( (string) $data['id_number'] ) : '';
     if ( $id === '' ) {
-        return 'ID Number is required.';
+        return 'ID/Passport is required.';
     }
-    if ( ! preg_match( '/^\d{13}$/', $id ) ) {
-        return 'ID Number must be 13 digits.';
+    // Accept SA IDs (13 digits), SA passports (9 alphanumeric), and most
+    // international passports (6-9 alphanumeric). Mirrors the JS idRx in
+    // lead-qualification.js so client and server agree. PACE runs the
+    // authoritative check on its end.
+    if ( ! preg_match( '/^[A-Za-z0-9]{6,13}$/', $id ) ) {
+        return 'ID/Passport must be 6-13 letters or digits.';
     }
-    // Deliberately no Luhn check here — PACE validates the ID against the
-    // Home Affairs database, and our local Luhn was rejecting real IDs.
 
     if ( ! is_email( $data['your_email'] ) ) {
         return 'Please enter a valid email address.';
