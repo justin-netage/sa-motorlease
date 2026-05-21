@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.7
+ * Version: 2.2.8
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.7' );
+define( 'SA_MOTORLEASE_VERSION', '2.2.8' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -3717,7 +3717,8 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     if (is_wp_error($response)) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_ERROR,
             sprintf('WP_Error from paceWebCreateLead: %s request=%s',
-                $response->get_error_message(), sa_motorlease_log_truncate( wp_json_encode( $data ) )));
+                $response->get_error_message(),
+                sa_motorlease_log_truncate( wp_json_encode( sa_motorlease_mask_pii( $data ) ) )));
         return new WP_REST_Response(['error' => 'API connection failed'], 500);
     }
 
@@ -3728,14 +3729,18 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     if ($status_code < 200 || $status_code >= 300) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
             sprintf('paceWebCreateLead HTTP %d request=%s response=%s',
-                $status_code, sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+                $status_code,
+                sa_motorlease_log_truncate( wp_json_encode( sa_motorlease_mask_pii( $data ) ) ),
+                substr($raw_body, 0, 1000)));
     }
 
     if (empty($body['lead_id'])) {
         $upstream_msg = isset($body['message']) ? $body['message'] : 'unknown';
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
             sprintf('paceWebCreateLead missing lead_id; upstream=%s http=%d request=%s response=%s',
-                $upstream_msg, $status_code, sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+                $upstream_msg, $status_code,
+                sa_motorlease_log_truncate( wp_json_encode( sa_motorlease_mask_pii( $data ) ) ),
+                substr($raw_body, 0, 1000)));
         return new WP_REST_Response([
             'error'    => 'Invalid API response (missing lead_id)',
             'upstream' => $upstream_msg,
@@ -3882,7 +3887,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
         sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
             sprintf( 'WP_Error from paceWebUpdateLead (lead_id=%d): %s request=%s',
                 $lead_id, $response->get_error_message(),
-                sa_motorlease_log_truncate( wp_json_encode( $loggable_payload ) ) ) );
+                sa_motorlease_log_truncate( wp_json_encode( sa_motorlease_mask_pii( $loggable_payload ) ) ) ) );
     } else {
         $code = wp_remote_retrieve_response_code( $response );
         $body = wp_remote_retrieve_body( $response );
@@ -3890,7 +3895,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
             sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
                 sprintf( 'paceWebUpdateLead HTTP %d (lead_id=%d) request=%s response=%s',
                     $code, $lead_id,
-                    sa_motorlease_log_truncate( wp_json_encode( $loggable_payload ) ),
+                    sa_motorlease_log_truncate( wp_json_encode( sa_motorlease_mask_pii( $loggable_payload ) ) ),
                     substr( $body, 0, 1000 ) ) );
         } else {
             sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_INFO,
@@ -4574,12 +4579,13 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
 
     if (empty($data['lead_id'])) {
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_WARN,
-            'Missing lead_id in incoming request. request=' . wp_json_encode( $data ?: [] ));
+            'Missing lead_id in incoming request. request=' . wp_json_encode( sa_motorlease_mask_pii( $data ?: [] ) ));
         return new WP_REST_Response(['error' => 'Missing lead ID'], 400);
     }
 
-    $lead_id      = (int) $data['lead_id'];
-    $json_payload = wp_json_encode($data, JSON_UNESCAPED_SLASHES);
+    $lead_id        = (int) $data['lead_id'];
+    $json_payload   = wp_json_encode($data, JSON_UNESCAPED_SLASHES);
+    $masked_payload = wp_json_encode( sa_motorlease_mask_pii( $data ), JSON_UNESCAPED_SLASHES );
 
     sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_INFO,
         sprintf('POST paceWebUpdateLead (lead_id=%d) request=%s',
@@ -4596,7 +4602,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
         $error_message = $response->get_error_message();
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_ERROR,
             sprintf('WP_Error from paceWebUpdateLead (lead_id=%d): %s request=%s',
-                $lead_id, $error_message, sa_motorlease_log_truncate( $json_payload )));
+                $lead_id, $error_message, sa_motorlease_log_truncate( $masked_payload )));
         return new WP_REST_Response(['error' => $error_message], 500);
     }
 
@@ -4606,7 +4612,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
     if ($code < 200 || $code >= 300) {
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_WARN,
             sprintf('paceWebUpdateLead HTTP %d (lead_id=%d) request=%s response=%s',
-                $code, $lead_id, sa_motorlease_log_truncate( $json_payload ), substr($body, 0, 1000)));
+                $code, $lead_id, sa_motorlease_log_truncate( $masked_payload ), substr($body, 0, 1000)));
     } else {
         sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_INFO,
             sprintf('OK lead_id=%d http=%d response=%s',
@@ -5257,8 +5263,9 @@ function sa_motorlease_log_lead( $channel, $level, $msg ) {
 
 /**
  * Recursively walk a lead/application payload and mask the PII fields by
- * key name. Returns a new array — does not mutate the input. Use for INFO
- * (success) logging only; raw payloads stay intact for WARN/ERROR entries.
+ * key name. Returns a new array — does not mutate the input. Used for every
+ * level (INFO/WARN/ERROR); the log file should never carry raw customer
+ * names, IDs, phone numbers, emails, addresses, employer, or take-home pay.
  */
 function sa_motorlease_mask_pii( $value ) {
     static $pii_keys = [
@@ -5270,6 +5277,9 @@ function sa_motorlease_mask_pii( $value ) {
         'your_email'       => 'email',
         'work_email'       => 'email',
         'street'           => 'address',
+        'suburb'           => 'address',
+        'employer_name'    => 'name',
+        'take_home'        => 'amount',
     ];
     if ( ! is_array( $value ) ) {
         return $value;
@@ -5303,6 +5313,8 @@ function sa_motorlease_mask_by_kind( $kind, $value ) {
             return $value[0] . ( $len > 1 ? str_repeat( '*', $len - 1 ) : '' );
         case 'address':
             return '*** (' . strlen( $value ) . ' chars)';
+        case 'amount':
+            return '***';
     }
     return '***';
 }
