@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.3
+ * Version: 2.2.4
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.3' );
+define( 'SA_MOTORLEASE_VERSION', '2.2.4' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -736,7 +736,7 @@ function vi_fetch_json_curl($url, $context = 'generic', $timeout = 30) {
  * Returns ['featured'=>[...], 'gallery'=>[...]]; each item: ['key','label','base','bytes']
  */
 function vi_collect_usable_images($vehicle_id, $vehicle_title, $image_labels) {
-    $endpoint = sprintf('https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepImages/id/%s', rawurlencode($vehicle_id));
+    $endpoint = sa_motorlease_pace_url( '/api/entity/paceWebPrepImages/id/' . rawurlencode($vehicle_id) );
     log_import_update("Images: fetching (collect) $endpoint");
 
     $json = vi_fetch_json_curl($endpoint, 'images-collect:' . $vehicle_id, 30);
@@ -1150,10 +1150,7 @@ function vi_purge_product_images($product_id) {
  * Quick probe to confirm at least one decodable image exists for vehicle_id.
  */
 function vi_vehicle_has_images($vehicle_id) {
-    $endpoint = sprintf(
-        'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepImages/id/%s',
-        rawurlencode($vehicle_id)
-    );
+    $endpoint = sa_motorlease_pace_url( '/api/entity/paceWebPrepImages/id/' . rawurlencode($vehicle_id) );
 
     $json = vi_fetch_json_curl($endpoint, 'has_images:' . $vehicle_id, 20);
     if ($json === null) {
@@ -1200,7 +1197,7 @@ function vi_vehicle_has_images($vehicle_id) {
  * Also returns the feed_sku_set for prune logic.
  */
 function vi_fetch_feed() {
-    $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData';
+    $feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
     log_import_update('Fetch feed: ' . $feed_url);
 
     $t0 = microtime(true);
@@ -1979,7 +1976,7 @@ if (!function_exists('vi_prepare_images_from_feed_for_vehicle')) {
     function vi_prepare_images_from_feed_for_vehicle($vehicle_id, $vehicle_title = '') {
         global $image_labels;
 
-        $endpoint = sprintf('https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepImages/id/%s', rawurlencode($vehicle_id));
+        $endpoint = sa_motorlease_pace_url( '/api/entity/paceWebPrepImages/id/' . rawurlencode($vehicle_id) );
         log_image_repair("fetching (collect) {$endpoint}");
 
         $json = vi_fetch_json_curl($endpoint, 'images-collect:' . $vehicle_id, 30);
@@ -3007,7 +3004,7 @@ function vi_migrate_rebate_target() {
 
     log_import_update( '=== Rebate Target migration START ===' );
 
-    $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData';
+    $feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
     $response = wp_remote_get( $feed_url, [ 'timeout' => 45, 'headers' => [ 'Accept' => 'application/json' ] ] );
 
     if ( is_wp_error( $response ) ) {
@@ -3391,8 +3388,7 @@ function log_license_plate_update($message) {
 
 // Update existing products with license plate attribute from live feed
 function update_all_existing_products_with_license_plate_from_feed() {
-    $domain = 'https://paceapp-server.azurewebsites.net';
-    $api_endpoint = $domain . '/api/entity/paceWebPrepData';
+    $api_endpoint = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
     $json_data = file_get_contents($api_endpoint);
 
     if ($json_data === false) {
@@ -4165,7 +4161,7 @@ function process_images_for_existing_vehicle($sku, $domain) {
 // ---------------------------------------------------------------------------
 add_action('fix_and_replace_broken_images', function () {
     ensure_media_libs_loaded();
-    $domain = 'https://paceapp-server.azurewebsites.net';
+    $domain = sa_motorlease_pace_base_url();
     $fixed = 0;
     $skipped = 0;
 
@@ -4259,8 +4255,7 @@ add_action('init', function () {
     if (!isset($_GET['test_image_feed']) || !current_user_can('manage_options')) return;
 
     $sku = sanitize_text_field($_GET['test_image_feed']);
-    $domain = 'https://paceapp-server.azurewebsites.net'; // ✅ replace this with your actual domain
-    $image_feed_url = $domain . "/api/entity/paceWebPrepImages/id/" . $sku;
+    $image_feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepImages/id/' . $sku );
 
     echo "<pre>";
     echo "🔍 Fetching image feed for SKU: $sku\n";
@@ -4332,7 +4327,7 @@ add_action('update_number_of_payments_attribute', function () {
         }
 
         // Fetch full vehicle data from your original feed
-        $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData'; // 🔁 Replace with actual feed
+        $feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
         $feed = file_get_contents($feed_url);
         if (!$feed) {
             log_to_file("[Backfill] Failed to fetch feed", 'backfill_payments.log');
@@ -4587,8 +4582,7 @@ add_action('rest_api_init', function () {
 });
 
 function update_initiation_fee_special_for_existing_products() {
-    $domain = 'https://paceapp-server.azurewebsites.net';
-    $api_endpoint = $domain . '/api/entity/paceWebPrepData';
+    $api_endpoint = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
     $json_data = file_get_contents($api_endpoint);
 
     if ($json_data === false) {
@@ -4686,7 +4680,7 @@ function cleanup_sold_products() {
 // --- cleanup_sold_status_from_feed + ?update_sold_from_feed
 // ---------------------------------------------------------------------------
 function cleanup_sold_status_from_feed() {
-    $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData';
+    $feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
 
     $json = file_get_contents($feed_url);
     if ($json === false) {
@@ -4827,8 +4821,7 @@ add_action('init', function () {
 });
 
 function log_products_missing_from_feed() {
-    $domain = 'https://paceapp-server.azurewebsites.net';
-    $feed_url = $domain . '/api/entity/paceWebPrepData';
+    $feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
 
     $json = file_get_contents($feed_url);
     if ($json === false) {
@@ -4910,8 +4903,7 @@ add_action('init', function () {
 });
 
 function remove_missing_products_from_feed() {
-    $domain = 'https://paceapp-server.azurewebsites.net';
-    $feed_url = $domain . '/api/entity/paceWebPrepData';
+    $feed_url = sa_motorlease_pace_url( '/api/entity/paceWebPrepData' );
 
     $json = file_get_contents($feed_url);
     if ($json === false) {
@@ -5049,7 +5041,7 @@ const SA_MOTORLEASE_STATUS_SLUG     = 'sa-motorlease-status';
 
 function sa_motorlease_default_settings() {
     return [
-        'pace_base_url'        => 'https://paceapp-server.azurewebsites.net',
+        'pace_base_url'        => '',
         'pace_enabled'         => 1,
         'qualify_form_ids'     => '1,3',
         'gf_forwarder_form_id' => 5,
@@ -5069,8 +5061,19 @@ function sa_motorlease_get_setting( $key, $fallback = null ) {
     return array_key_exists( $key, $s ) ? $s[ $key ] : $fallback;
 }
 
+/**
+ * PACE base URL resolution order:
+ *   1. SA_MOTORLEASE_PACE_BASE_URL constant (define in wp-config.php to keep
+ *      the URL out of source control and the database).
+ *   2. The 'pace_base_url' setting saved via WP admin.
+ *   3. Empty string — callers will fail their HTTP requests, and the Status
+ *      page will show "PACE base URL" blank, prompting the admin to configure.
+ */
 function sa_motorlease_pace_base_url() {
-    $url = (string) sa_motorlease_get_setting( 'pace_base_url', 'https://paceapp-server.azurewebsites.net' );
+    if ( defined( 'SA_MOTORLEASE_PACE_BASE_URL' ) && SA_MOTORLEASE_PACE_BASE_URL !== '' ) {
+        return untrailingslashit( (string) SA_MOTORLEASE_PACE_BASE_URL );
+    }
+    $url = (string) sa_motorlease_get_setting( 'pace_base_url', '' );
     return untrailingslashit( $url );
 }
 
@@ -5082,14 +5085,20 @@ function sa_motorlease_pace_base_url() {
  *   pace_base_url = https://host?env=test
  *   path          = /api/entity/paceWebCreateLead
  *   result        = https://host/api/entity/paceWebCreateLead?env=test
+ *
+ * Returns an empty string if the base URL is not configured, so callers fail
+ * their HTTP request rather than hitting a hardcoded host.
  */
 function sa_motorlease_pace_url( $path = '' ) {
-    $base  = sa_motorlease_get_setting( 'pace_base_url', 'https://paceapp-server.azurewebsites.net' );
-    $parts = wp_parse_url( (string) $base );
+    $base = sa_motorlease_pace_base_url();
+    if ( $base === '' ) {
+        return '';
+    }
+    $parts = wp_parse_url( $base );
 
     if ( ! $parts || empty( $parts['host'] ) ) {
         // Fallback: best-effort concat if the configured value is unparseable.
-        return rtrim( (string) $base, '/' ) . $path;
+        return rtrim( $base, '/' ) . $path;
     }
 
     $scheme    = $parts['scheme'] ?? 'https';
@@ -5253,7 +5262,7 @@ function sa_motorlease_sanitize_settings( $input ) {
 
     if ( isset( $input['pace_base_url'] ) ) {
         $url = esc_url_raw( trim( (string) $input['pace_base_url'] ) );
-        $out['pace_base_url'] = $url !== '' ? untrailingslashit( $url ) : $defaults['pace_base_url'];
+        $out['pace_base_url'] = $url !== '' ? untrailingslashit( $url ) : '';
     }
 
     $out['pace_enabled'] = ! empty( $input['pace_enabled'] ) ? 1 : 0;
@@ -5284,12 +5293,19 @@ function sa_motorlease_sanitize_settings( $input ) {
 // --- Settings field renderers ----------------------------------------------
 
 function sa_motorlease_field_pace_base_url() {
-    $val = esc_attr( sa_motorlease_get_setting( 'pace_base_url' ) );
+    $val            = esc_attr( sa_motorlease_get_setting( 'pace_base_url' ) );
+    $constant_set   = defined( 'SA_MOTORLEASE_PACE_BASE_URL' ) && SA_MOTORLEASE_PACE_BASE_URL !== '';
+    $disabled_attr  = $constant_set ? ' disabled' : '';
     printf(
-        '<input type="url" class="regular-text code" name="%s[pace_base_url]" value="%s" placeholder="https://paceapp-server.azurewebsites.net">',
-        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
+        '<input type="url" class="regular-text code" name="%s[pace_base_url]" value="%s" placeholder="https://api.example.com"%s>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val, $disabled_attr
     );
-    echo '<p class="description">No trailing slash. A query string is allowed and will be preserved on every endpoint — e.g. <code>https://paceapp-server.azurewebsites.net?env=test</code> produces calls like <code>.../api/entity/paceWebCreateLead?env=test</code>. Use the preview host (<code>https://paceapp-server-preview.azurewebsites.net</code>) to test changes against the staging API.</p>';
+    echo '<p class="description">No trailing slash. A query string is allowed and will be preserved on every endpoint — e.g. <code>https://api.example.com?env=test</code> produces calls like <code>.../api/entity/paceWebCreateLead?env=test</code>.</p>';
+    if ( $constant_set ) {
+        echo '<p class="description"><strong>Overridden by <code>SA_MOTORLEASE_PACE_BASE_URL</code> in <code>wp-config.php</code>.</strong> Remove that define to edit the URL here.</p>';
+    } else {
+        echo '<p class="description">For best practice, set <code>define(\'SA_MOTORLEASE_PACE_BASE_URL\', \'https://api.example.com\');</code> in <code>wp-config.php</code> so the URL lives outside both the database and the plugin source.</p>';
+    }
 }
 
 function sa_motorlease_field_pace_enabled() {
