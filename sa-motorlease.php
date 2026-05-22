@@ -2283,6 +2283,25 @@ add_action('init', function () {
 
     header('Content-Type: text/plain; charset=utf-8');
     echo "=== vi_run_import (mode={$mode}, clear_locks=" . ($clear_locks ? 'yes' : 'no') . ") ===\n\n";
+    @ob_implicit_flush(true);
+    while (ob_get_level() > 0) { @ob_end_flush(); }
+
+    // Surface fatals inline + to the log. PHP swallows fatals into the WP
+    // generic error screen by default, which is what the operator just hit;
+    // this captures error_get_last() at shutdown and dumps it where it's
+    // actually readable.
+    register_shutdown_function(function () {
+        $e = error_get_last();
+        if (!$e) return;
+        if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) return;
+        $msg = sprintf('[FATAL] %s in %s:%d', $e['message'], $e['file'], $e['line']);
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_ERROR, "vi_run_import: {$msg}");
+        // Clear locks so the next attempt isn't blocked by a stuck transient.
+        delete_transient('vi_create_running_lock');
+        delete_transient('vi_update_running_lock');
+        // Best-effort: also print to the response if headers/buffer still allow it.
+        echo "\n\n!!! FATAL !!!\n{$msg}\nLocks cleared.\n";
+    });
 
     if ($clear_locks) {
         $had_create = (bool) get_transient('vi_create_running_lock');
@@ -2295,18 +2314,23 @@ add_action('init', function () {
 
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "URL trigger: vi_run_import mode={$mode}");
 
-    if ($mode === 'create' || $mode === 'both') {
-        echo "--- running vi_create_new_products() ---\n";
+    $run = function ($label, $fn) {
+        echo "--- running {$label}() ---\n";
         $t0 = microtime(true);
-        vi_create_new_products();
-        printf("elapsed: %.2fs\n\n", microtime(true) - $t0);
-    }
-    if ($mode === 'update' || $mode === 'both') {
-        echo "--- running vi_update_existing_products() ---\n";
-        $t0 = microtime(true);
-        vi_update_existing_products();
-        printf("elapsed: %.2fs\n\n", microtime(true) - $t0);
-    }
+        try {
+            $fn();
+            printf("elapsed: %.2fs (ok)\n\n", microtime(true) - $t0);
+        } catch (\Throwable $e) {
+            $msg = sprintf('%s: %s in %s:%d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+            sa_motorlease_log('import', SA_MOTORLEASE_LOG_ERROR, "vi_run_import {$label} threw: {$msg}");
+            // Release the lock the function set before throwing.
+            delete_transient($label === 'vi_create_new_products' ? 'vi_create_running_lock' : 'vi_update_running_lock');
+            printf("elapsed: %.2fs (THROWN)\n\n!!! EXCEPTION !!!\n%s\n\n%s\n\n", microtime(true) - $t0, $msg, $e->getTraceAsString());
+        }
+    };
+
+    if ($mode === 'create' || $mode === 'both') $run('vi_create_new_products', 'vi_create_new_products');
+    if ($mode === 'update' || $mode === 'both') $run('vi_update_existing_products', 'vi_update_existing_products');
 
     echo "Log file: " . sa_motorlease_log_path() . "\n";
     echo "Done. Tail the log for full output.\n";
