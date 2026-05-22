@@ -1240,7 +1240,7 @@ function vi_create_new_products() {
 
     $lock_key = 'vi_create_running_lock';
     if (get_transient($lock_key)) {
-        log_import_update('=== Create SKIPPED: already running (lock present). ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create SKIPPED: already running (lock present). ===');
         return;
     }
     set_transient($lock_key, getmypid() ?: 1, VI_MAX_CREATE_SEC + 60);
@@ -1250,24 +1250,24 @@ function vi_create_new_products() {
     $run_t0 = microtime(true);
     $time_up = function() use ($run_t0) { return (microtime(true) - $run_t0) >= VI_MAX_CREATE_SEC; };
 
-    log_import_update('=== Create START ===');
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create START ===');
 
     $feed = vi_fetch_feed();
     if ($feed === null) {
-        log_import_update('=== Create END (feed error) ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create END (feed error) ===');
         delete_transient($lock_key);
         return;
     }
 
     $items = $feed['items'];
     $create_limit = (int) VI_MAX_VEHICLES_PER_RUN;
-    if ($create_limit > 0) log_import_update("Per-run create limit: VI_MAX_VEHICLES_PER_RUN={$create_limit}");
+    if ($create_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run create limit: VI_MAX_VEHICLES_PER_RUN={$create_limit}");
 
     $created = 0;
 
     foreach ($items as $idx => $data) {
-        if ($time_up()) { log_import_update("Time budget reached during CREATE pass."); break; }
-        if ($create_limit > 0 && $created >= $create_limit) { log_import_update("Create cap reached; stopping."); break; }
+        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during CREATE pass."); break; }
+        if ($create_limit > 0 && $created >= $create_limit) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Create cap reached; stopping."); break; }
 
         $sku   = isset($data['id']) ? (string)$data['id'] : '';
         $name  = isset($data['vehicle_description']) ? (string)$data['vehicle_description'] : '';
@@ -1404,7 +1404,7 @@ function vi_create_new_products() {
     update_option('vi_wbw_reindex_needed', time());
 
     $run_s = round((microtime(true) - $run_t0), 2);
-    log_import_update("=== Create END — created={$created}, elapsed={$run_s}s ===");
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Create END — created={$created}, elapsed={$run_s}s ===");
     delete_transient($lock_key);
 }
 
@@ -1415,7 +1415,7 @@ function vi_update_existing_products() {
 
     $lock_key = 'vi_update_running_lock';
     if (get_transient($lock_key)) {
-        log_import_update('=== Update SKIPPED: already running (lock present). ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update SKIPPED: already running (lock present). ===');
         return;
     }
     set_transient($lock_key, getmypid() ?: 1, VI_MAX_UPDATE_SEC + 60);
@@ -1425,11 +1425,11 @@ function vi_update_existing_products() {
     $run_t0 = microtime(true);
     $time_up = function() use ($run_t0) { return (microtime(true) - $run_t0) >= VI_MAX_UPDATE_SEC; };
 
-    log_import_update('=== Update START ===');
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update START ===');
 
     $feed = vi_fetch_feed();
     if ($feed === null) {
-        log_import_update('=== Update END (feed error) ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update END (feed error) ===');
         delete_transient($lock_key);
         return;
     }
@@ -1437,13 +1437,13 @@ function vi_update_existing_products() {
     $items        = $feed['items'];
     $feed_sku_set = $feed['feed_sku_set'];
     $update_limit = (int) VI_MAX_UPDATES_PER_RUN;
-    if ($update_limit > 0) log_import_update("Per-run update limit: VI_MAX_UPDATES_PER_RUN={$update_limit}");
+    if ($update_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run update limit: VI_MAX_UPDATES_PER_RUN={$update_limit}");
 
     $updated   = 0;
     $processed = 0;
 
     foreach ($items as $idx => $data) {
-        if ($time_up()) { log_import_update("Time budget reached during UPDATE pass."); break; }
+        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during UPDATE pass."); break; }
 
         $processed++;
         $sku   = isset($data['id']) ? (string)$data['id'] : '';
@@ -1464,7 +1464,7 @@ function vi_update_existing_products() {
         }
 
         if ($update_limit > 0 && $updated >= $update_limit) {
-            log_import_update("Update cap reached; skipping further updates this run.");
+            sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Update cap reached; skipping further updates this run.");
             break;
         }
 
@@ -1626,7 +1626,7 @@ function vi_update_existing_products() {
     }
 
     $run_s = round((microtime(true) - $run_t0), 2);
-    log_import_update("=== Update END — updated={$updated}, processed={$processed}/{" . count($items) . "}, elapsed={$run_s}s ===");
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Update END — updated={$updated}, processed={$processed}/{" . count($items) . "}, elapsed={$run_s}s ===");
     delete_transient($lock_key);
 }
 
