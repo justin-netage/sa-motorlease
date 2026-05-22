@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.2.7
+ * Version: 2.3.0-beta.1
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.2.7' );
+define( 'SA_MOTORLEASE_VERSION', '2.3.0-beta.1' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -161,10 +161,6 @@ add_action('init', function () {
     if (!wp_next_scheduled('sa_motorlease_log_rotate_daily')) {
         wp_schedule_event(time() + HOUR_IN_SECONDS, 'daily', 'sa_motorlease_log_rotate_daily');
     }
-});
-register_deactivation_hook(__FILE__, function () {
-    $ts = wp_next_scheduled('sa_motorlease_log_rotate_daily');
-    if ($ts) wp_unschedule_event($ts, 'sa_motorlease_log_rotate_daily');
 });
 
 // === Legacy logger shims (route everything through sa_motorlease_log) =======
@@ -1244,34 +1240,34 @@ function vi_create_new_products() {
 
     $lock_key = 'vi_create_running_lock';
     if (get_transient($lock_key)) {
-        log_import_update('=== Create SKIPPED: already running (lock present). ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create SKIPPED: already running (lock present). ===');
         return;
     }
-    set_transient($lock_key, getmypid() ?: 1, VI_MAX_CREATE_SEC + 60);
+    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, VI_MAX_CREATE_SEC + 60);
 
     @ignore_user_abort(true);
     if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_CREATE_SEC + 30);
     $run_t0 = microtime(true);
     $time_up = function() use ($run_t0) { return (microtime(true) - $run_t0) >= VI_MAX_CREATE_SEC; };
 
-    log_import_update('=== Create START ===');
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create START ===');
 
     $feed = vi_fetch_feed();
     if ($feed === null) {
-        log_import_update('=== Create END (feed error) ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create END (feed error) ===');
         delete_transient($lock_key);
         return;
     }
 
     $items = $feed['items'];
     $create_limit = (int) VI_MAX_VEHICLES_PER_RUN;
-    if ($create_limit > 0) log_import_update("Per-run create limit: VI_MAX_VEHICLES_PER_RUN={$create_limit}");
+    if ($create_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run create limit: VI_MAX_VEHICLES_PER_RUN={$create_limit}");
 
     $created = 0;
 
     foreach ($items as $idx => $data) {
-        if ($time_up()) { log_import_update("Time budget reached during CREATE pass."); break; }
-        if ($create_limit > 0 && $created >= $create_limit) { log_import_update("Create cap reached; stopping."); break; }
+        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during CREATE pass."); break; }
+        if ($create_limit > 0 && $created >= $create_limit) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Create cap reached; stopping."); break; }
 
         $sku   = isset($data['id']) ? (string)$data['id'] : '';
         $name  = isset($data['vehicle_description']) ? (string)$data['vehicle_description'] : '';
@@ -1403,16 +1399,12 @@ function vi_create_new_products() {
         }
     }
 
-    // Trigger reindex
-    wbw_index_after_import_smart(60);
+    // Signal that a reindex is needed; the update cron (30 min later) will
+    // trigger the actual index pass. This avoids two heavy index runs per hour.
     update_option('vi_wbw_reindex_needed', time());
-    if (!wp_next_scheduled('wbw_custom_index_cron')) {
-        wp_schedule_single_event(time() + 60, 'wbw_custom_index_cron');
-        log_import_update('[WBW Index] Scheduled wbw_custom_index_cron in 60s.');
-    }
 
     $run_s = round((microtime(true) - $run_t0), 2);
-    log_import_update("=== Create END — created={$created}, elapsed={$run_s}s ===");
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Create END — created={$created}, elapsed={$run_s}s ===");
     delete_transient($lock_key);
 }
 
@@ -1423,21 +1415,21 @@ function vi_update_existing_products() {
 
     $lock_key = 'vi_update_running_lock';
     if (get_transient($lock_key)) {
-        log_import_update('=== Update SKIPPED: already running (lock present). ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update SKIPPED: already running (lock present). ===');
         return;
     }
-    set_transient($lock_key, getmypid() ?: 1, VI_MAX_UPDATE_SEC + 60);
+    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, VI_MAX_UPDATE_SEC + 60);
 
     @ignore_user_abort(true);
     if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_UPDATE_SEC + 30);
     $run_t0 = microtime(true);
     $time_up = function() use ($run_t0) { return (microtime(true) - $run_t0) >= VI_MAX_UPDATE_SEC; };
 
-    log_import_update('=== Update START ===');
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update START ===');
 
     $feed = vi_fetch_feed();
     if ($feed === null) {
-        log_import_update('=== Update END (feed error) ===');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update END (feed error) ===');
         delete_transient($lock_key);
         return;
     }
@@ -1445,13 +1437,13 @@ function vi_update_existing_products() {
     $items        = $feed['items'];
     $feed_sku_set = $feed['feed_sku_set'];
     $update_limit = (int) VI_MAX_UPDATES_PER_RUN;
-    if ($update_limit > 0) log_import_update("Per-run update limit: VI_MAX_UPDATES_PER_RUN={$update_limit}");
+    if ($update_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run update limit: VI_MAX_UPDATES_PER_RUN={$update_limit}");
 
     $updated   = 0;
     $processed = 0;
 
     foreach ($items as $idx => $data) {
-        if ($time_up()) { log_import_update("Time budget reached during UPDATE pass."); break; }
+        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during UPDATE pass."); break; }
 
         $processed++;
         $sku   = isset($data['id']) ? (string)$data['id'] : '';
@@ -1472,7 +1464,7 @@ function vi_update_existing_products() {
         }
 
         if ($update_limit > 0 && $updated >= $update_limit) {
-            log_import_update("Update cap reached; skipping further updates this run.");
+            sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Update cap reached; skipping further updates this run.");
             break;
         }
 
@@ -1563,7 +1555,11 @@ function vi_update_existing_products() {
                 log_import_update("Update: images unchanged for product_id={$existing_id} (sku={$sku}) — skipping re-upload (hash={$stored_hash}).");
             }
         } else {
-            log_import_update("Update: write_date changed but no images available in feed for sku={$sku} — keeping existing images.");
+            // Feed returned no images — don't advance write_date so the next
+            // run retries image sync rather than treating the product as done.
+            log_import_update("Update: write_date changed but no images available in feed for sku={$sku} — keeping existing images, deferring write_date.");
+            $updated++;
+            continue;
         }
 
         // === Persist new write_date marker ===
@@ -1591,7 +1587,12 @@ function vi_update_existing_products() {
             }
 
             $sku = get_post_meta($pid, '_sku', true);
-            $skip_removal = wc_get_product($pid)->get_attribute('Skip Removal');
+            $wc_product = wc_get_product($pid);
+            if ( ! $wc_product ) {
+                log_import_update("Prune: skipping product_id={$pid} — wc_get_product() returned false (broken postmeta?)");
+                continue;
+            }
+            $skip_removal = $wc_product->get_attribute('Skip Removal');
 
             if (strcasecmp(trim($skip_removal), 'yes') === 0) {
                 log_import_update("Prune: skipping product_id={$pid} (SKU={$sku}) — marked 'Skip Removal: Yes'");
@@ -1625,7 +1626,7 @@ function vi_update_existing_products() {
     }
 
     $run_s = round((microtime(true) - $run_t0), 2);
-    log_import_update("=== Update END — updated={$updated}, processed={$processed}/{" . count($items) . "}, elapsed={$run_s}s ===");
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Update END — updated={$updated}, processed={$processed}/{" . count($items) . "}, elapsed={$run_s}s ===");
     delete_transient($lock_key);
 }
 
@@ -1662,9 +1663,18 @@ register_activation_hook(__FILE__, function () {
 });
 
 register_deactivation_hook(__FILE__, function () {
-    foreach (['vi_create_hourly_event', 'vi_update_hourly_event', 'vehicle_importer_hourly_event'] as $hook) {
-        $ts = wp_next_scheduled($hook);
-        if ($ts) wp_unschedule_event($ts, $hook);
+    foreach ([
+        'vi_create_hourly_event',
+        'vi_update_hourly_event',
+        'vehicle_importer_hourly_event',
+        'vehicle_images_repair_event',
+        'vi_image_sync_cron',
+        'set_sold_date_cron_event',
+        'delete_expired_sold_products_event',
+        'fix_and_replace_broken_images',
+        'sa_motorlease_log_rotate_daily',
+    ] as $hook) {
+        wp_clear_scheduled_hook($hook);
     }
     log_import_update('Deactivation: all crons unscheduled.');
 });
@@ -2130,8 +2140,10 @@ if (!function_exists('repair_missing_vehicle_images')) {
             $feed_image_count = count($prepared['featured']) + count($prepared['gallery']);
             log_image_repair("product {$pid} (sku={$sku}): feed has {$feed_image_count} images available");
 
-            // Perform the repair
+            // Perform the repair; hold the lock so sync doesn't collide.
+            set_transient( "vi_attach_lock_{$pid}", time(), 120 );
             vi_attach_prepared_images_repair($pid, $title, $prepared);
+            delete_transient( "vi_attach_lock_{$pid}" );
             $repaired++;
 
             log_image_repair("product {$pid} (sku={$sku}): repair completed");
@@ -2193,6 +2205,9 @@ add_action('init', function () {
         status_header(403);
         exit('Forbidden - admin access required');
     }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
 
     log_image_repair('URL trigger activated: ?vi_repair_images=1');
 
@@ -2227,10 +2242,98 @@ add_action('init', function () {
 
     if (!$sku && $result['scanned'] >= $limit) {
         $next_offset = $offset + $limit;
+        $next_url    = add_query_arg([
+            'vi_repair_images' => '1',
+            'limit'            => $limit,
+            'offset'           => $next_offset,
+            '_wpnonce'         => wp_create_nonce('sa_motorlease_admin_action'),
+        ], admin_url());
         echo "\nMore products may exist. To continue:\n";
-        echo "?vi_repair_images=1&limit={$limit}&offset={$next_offset}\n";
+        echo esc_url_raw($next_url) . "\n";
     }
 
+    exit;
+}, 20);
+
+// === URL trigger: run create/update import in-process =======================
+// Bypasses WP-Cron / WP-Crontrol entirely (no loopback request), so hosts with
+// a broken self-loopback can still trigger an import from the browser.
+// Usage:
+//   ?vi_run_import=1                - run create then update
+//   ?vi_run_import=1&mode=create    - create only
+//   ?vi_run_import=1&mode=update    - update only
+//   ?vi_run_import=1&clear_locks=1  - delete stuck create/update lock transients first
+add_action('init', function () {
+    if (!isset($_GET['vi_run_import'])) return;
+
+    if (!is_user_logged_in() || !current_user_can('manage_options')) {
+        status_header(403);
+        exit('Forbidden - admin access required');
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
+
+    $mode = isset($_GET['mode']) ? sanitize_key($_GET['mode']) : 'both';
+    if (!in_array($mode, ['create', 'update', 'both'], true)) $mode = 'both';
+    $clear_locks = !empty($_GET['clear_locks']);
+
+    @ignore_user_abort(true);
+    if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_CREATE_SEC + VI_MAX_UPDATE_SEC + 60);
+
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "=== vi_run_import (mode={$mode}, clear_locks=" . ($clear_locks ? 'yes' : 'no') . ") ===\n\n";
+    @ob_implicit_flush(true);
+    while (ob_get_level() > 0) { @ob_end_flush(); }
+
+    // Surface fatals inline + to the log. PHP swallows fatals into the WP
+    // generic error screen by default, which is what the operator just hit;
+    // this captures error_get_last() at shutdown and dumps it where it's
+    // actually readable.
+    register_shutdown_function(function () {
+        $e = error_get_last();
+        if (!$e) return;
+        if (!in_array($e['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR], true)) return;
+        $msg = sprintf('[FATAL] %s in %s:%d', $e['message'], $e['file'], $e['line']);
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_ERROR, "vi_run_import: {$msg}");
+        // Clear locks so the next attempt isn't blocked by a stuck transient.
+        delete_transient('vi_create_running_lock');
+        delete_transient('vi_update_running_lock');
+        // Best-effort: also print to the response if headers/buffer still allow it.
+        echo "\n\n!!! FATAL !!!\n{$msg}\nLocks cleared.\n";
+    });
+
+    if ($clear_locks) {
+        $had_create = (bool) get_transient('vi_create_running_lock');
+        $had_update = (bool) get_transient('vi_update_running_lock');
+        delete_transient('vi_create_running_lock');
+        delete_transient('vi_update_running_lock');
+        echo "Locks cleared (create_was_set=" . ($had_create ? 'yes' : 'no') . ", update_was_set=" . ($had_update ? 'yes' : 'no') . ")\n\n";
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "URL trigger: locks cleared (create={$had_create}, update={$had_update})");
+    }
+
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "URL trigger: vi_run_import mode={$mode}");
+
+    $run = function ($label, $fn) {
+        echo "--- running {$label}() ---\n";
+        $t0 = microtime(true);
+        try {
+            $fn();
+            printf("elapsed: %.2fs (ok)\n\n", microtime(true) - $t0);
+        } catch (\Throwable $e) {
+            $msg = sprintf('%s: %s in %s:%d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+            sa_motorlease_log('import', SA_MOTORLEASE_LOG_ERROR, "vi_run_import {$label} threw: {$msg}");
+            // Release the lock the function set before throwing.
+            delete_transient($label === 'vi_create_new_products' ? 'vi_create_running_lock' : 'vi_update_running_lock');
+            printf("elapsed: %.2fs (THROWN)\n\n!!! EXCEPTION !!!\n%s\n\n%s\n\n", microtime(true) - $t0, $msg, $e->getTraceAsString());
+        }
+    };
+
+    if ($mode === 'create' || $mode === 'both') $run('vi_create_new_products', 'vi_create_new_products');
+    if ($mode === 'update' || $mode === 'both') $run('vi_update_existing_products', 'vi_update_existing_products');
+
+    echo "Log file: " . sa_motorlease_log_path() . "\n";
+    echo "Done. Tail the log for full output.\n";
     exit;
 }, 20);
 
@@ -2339,7 +2442,9 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
                     log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] images differ from feed — would update");
                 } else {
                     log_image_repair("product {$pid} (sku={$sku}): images differ from feed — syncing per-image");
+                    set_transient( "vi_attach_lock_{$pid}", time(), 120 );
                     vi_diff_sync_product_images($pid, $fresh_prepared);
+                    delete_transient( "vi_attach_lock_{$pid}" );
                 }
                 $updated++;
             }
@@ -2357,7 +2462,9 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
             log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] images CHANGED (old={$stored_hash} new={$fresh_hash}) — no changes made");
         } else {
             log_image_repair("product {$pid} (sku={$sku}): images CHANGED (old={$stored_hash} new={$fresh_hash}) — syncing per-image");
+            set_transient( "vi_attach_lock_{$pid}", time(), 120 );
             vi_diff_sync_product_images($pid, $fresh_prepared);
+            delete_transient( "vi_attach_lock_{$pid}" );
         }
         $updated++;
     }
@@ -2385,6 +2492,9 @@ add_action('init', function () {
     if (!is_user_logged_in() || !current_user_can('manage_options')) {
         status_header(403);
         exit('Forbidden - admin access required');
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
     }
 
     $dry_run = !empty($_GET['dry_run']);
@@ -2452,6 +2562,7 @@ h1{font-size:18px;color:#f0f6fc;margin-bottom:16px;display:flex;align-items:cent
 const TOTAL   = <?= $total_js ?>;
 const DRY_RUN = <?= $dry_run_js ?>;
 const SKU     = <?= $sku_js ?>;
+const NONCE   = <?= wp_json_encode(wp_create_nonce('sa_motorlease_admin_action')) ?>;
 const BATCH   = 20;
 
 let offset = 0, batch = 0;
@@ -2479,6 +2590,7 @@ async function runBatch() {
     const p = new URLSearchParams({vi_sync_batch:1, offset, limit:BATCH});
     if (DRY_RUN) p.set('dry_run', 1);
     if (SKU)     p.set('sku', SKU);
+    if (NONCE)   p.set('_wpnonce', NONCE);
 
     document.getElementById('status').textContent =
         'Processing batch ' + batch + '… (' + offset + ' / ' + (TOTAL || '?') + ' products)';
@@ -2536,6 +2648,11 @@ add_action('init', function () {
     if (!is_user_logged_in() || !current_user_can('manage_options')) {
         status_header(403);
         wp_send_json_error('Forbidden', 403);
+        exit;
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        status_header(403);
+        wp_send_json_error('Security check failed', 403);
         exit;
     }
 
@@ -2720,6 +2837,9 @@ add_action('init', function() {
 
     if (!current_user_can('administrator')) return;
     if (!isset($_GET['wbw_cleanup_ghosts'])) return;
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
 
     global $wpdb;
 
@@ -3004,6 +3124,10 @@ function vi_migrate_rebate_target() {
     if ( get_option( 'vi_rebate_target_migration_done' ) ) {
         return;
     }
+    // Rate-limit retries so a broken feed doesn't slow every page load.
+    if ( get_transient( 'vi_rebate_migration_retry_lock' ) ) {
+        return;
+    }
 
     log_import_update( '=== Rebate Target migration START ===' );
 
@@ -3012,18 +3136,21 @@ function vi_migrate_rebate_target() {
 
     if ( is_wp_error( $response ) ) {
         log_import_update( 'Rebate Target migration: feed request failed: ' . $response->get_error_message() );
-        return; // Try again on next init until it succeeds
+        set_transient( 'vi_rebate_migration_retry_lock', 1, HOUR_IN_SECONDS );
+        return;
     }
 
     $code = wp_remote_retrieve_response_code( $response );
     if ( $code !== 200 ) {
         log_import_update( "Rebate Target migration: feed HTTP {$code}; aborting." );
+        set_transient( 'vi_rebate_migration_retry_lock', 1, HOUR_IN_SECONDS );
         return;
     }
 
     $items = json_decode( wp_remote_retrieve_body( $response ), true );
     if ( ! is_array( $items ) ) {
         log_import_update( 'Rebate Target migration: feed JSON parse failed.' );
+        set_transient( 'vi_rebate_migration_retry_lock', 1, HOUR_IN_SECONDS );
         return;
     }
 
@@ -3109,23 +3236,23 @@ function sa_motorlease_product_importer_create_lead_table() {
         $table_name
     ));
 
-    if ($table_exists !== $table_name) {
-        require_once(ABSPATH . 'wp-admin/includes/upgrade.php');
+    require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
 
-        $sql = "CREATE TABLE $table_name (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            lead_id BIGINT NOT NULL,
-            state VARCHAR(50) NOT NULL,
-            qualify_salary BOOLEAN NOT NULL,
-            qualify_license BOOLEAN NOT NULL,
-            qualify_area BOOLEAN NOT NULL,
-            rental_limit DECIMAL(10,2) NOT NULL,
-            fast_track BOOLEAN NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        ) $charset_collate;";
+    // Always run dbDelta so it can add missing columns/keys to existing tables.
+    $sql = "CREATE TABLE $table_name (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        lead_id BIGINT NOT NULL,
+        state VARCHAR(50) NOT NULL,
+        qualify_salary BOOLEAN NOT NULL,
+        qualify_license BOOLEAN NOT NULL,
+        qualify_area BOOLEAN NOT NULL,
+        rental_limit DECIMAL(10,2) NOT NULL,
+        fast_track BOOLEAN NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY lead_id_uniq (lead_id)
+    ) $charset_collate;";
 
-        dbDelta($sql);
-    }
+    dbDelta( $sql );
 }
 
 // ---------------------------------------------------------------------------
@@ -3330,12 +3457,16 @@ function delete_expired_sold_products() {
     foreach ($products as $wc_product) {
         if (!$wc_product instanceof WC_Product) continue;
 
-        // Fetch the "Sold Date" from the attribute
-        $sold_date = $wc_product->get_attribute('pa_sold-date');
+        // Use wp_get_post_terms so we get individual term names, not a
+        // comma-joined string (which breaks strtotime on multi-term values).
+        $pid        = $wc_product->get_id();
+        $date_terms = wp_get_post_terms( $pid, 'pa_sold-date', [ 'fields' => 'names' ] );
+        $sold_date  = ( is_array( $date_terms ) && ! empty( $date_terms ) ) ? $date_terms[0] : '';
 
-        if (!empty($sold_date) && strtotime($sold_date) < $seven_days_ago) {
-            wp_delete_post($wc_product->get_id(), true);
-            log_to_file("Deleted product ID: {$wc_product->get_id()} marked as sold for more than 7 days.", "sold-vehicles.log");
+        $dt = $sold_date ? DateTime::createFromFormat( 'Y-m-d', $sold_date ) : false;
+        if ( $dt && $dt->getTimestamp() < $seven_days_ago ) {
+            wp_delete_post( $pid, true );
+            log_to_file( "Deleted product ID: {$pid} marked as sold for more than 7 days.", 'sold-vehicles.log' );
         }
     }
 }
@@ -3550,16 +3681,19 @@ function export_product_attributes_csv() {
 add_action('admin_init', function () {
 
     if (isset($_GET['update_license_plates']) && current_user_can('manage_woocommerce')) {
+        check_admin_referer('sa_motorlease_admin_action');
         update_all_existing_products_with_license_plate_from_feed();
         wp_die('License plates updated from feed. Check log file for details.');
     }
 
     if (isset($_GET['deduplicate_products']) && current_user_can('manage_woocommerce')) {
+        check_admin_referer('sa_motorlease_admin_action');
         remove_duplicate_products_by_sku();
         wp_die('Duplicate products removed. Check log file for details.');
     }
 
     if (isset($_GET['export_attributes']) && current_user_can('manage_woocommerce')) {
+        check_admin_referer('sa_motorlease_admin_action');
         export_product_attributes_csv();
         $filename = plugin_dir_path(__FILE__) . 'product-attributes-export.csv';
         $download_name = 'product-attributes-export.csv';
@@ -3785,16 +3919,67 @@ add_action( 'init', function () {
 }, 5 );
 function gf5_forward_to_external_api( $entry, $form ) {
 
-    // 1) Build the base payload, casting lead_id to integer
+    // Keep PHP alive even if the browser closes after form submit.
+    @set_time_limit( 0 );
+    ignore_user_abort( true );
+
+    $lead_id   = intval( rgar( $entry, '42' ) );
     $proof_raw = rgar( $entry, '35' );
     $proof     = filter_var( $proof_raw, FILTER_VALIDATE_BOOLEAN ) ? 'true' : 'false';
+    $external  = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
 
-    $payload = [
-        'home_address'   => [
-            'street'   => rgar( $entry, '44' ),   // New plain text field
+    // Helper: POST a payload to paceWebUpdateLead, log the call, and log any error.
+    // The bank-statement base64 blob is replaced with a placeholder in logs so
+    // log lines stay small and customer document bytes are not persisted.
+    $send = function ( array $data, string $context ) use ( $external, $lead_id ) {
+        $loggable = $data;
+        if ( isset( $loggable['bank_statements']['objData'] ) ) {
+            $loggable['bank_statements'] = sprintf( '<%d file(s) omitted>',
+                count( $loggable['bank_statements']['objData'] ) );
+        }
+        $masked_request = wp_json_encode( sa_motorlease_mask_pii( $loggable ) );
+
+        sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_INFO,
+            sprintf( 'POST paceWebUpdateLead %s (lead_id=%d) request=%s',
+                $context, $lead_id, $masked_request ) );
+
+        $response = wp_remote_post( $external, [
+            'headers' => [ 'Content-Type' => 'application/json' ],
+            'body'    => wp_json_encode( $data, JSON_UNESCAPED_SLASHES ),
+            'timeout' => 120,
+        ] );
+
+        if ( is_wp_error( $response ) ) {
+            sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
+                sprintf( 'WP_Error paceWebUpdateLead %s (lead_id=%d): %s request=%s',
+                    $context, $lead_id, $response->get_error_message(),
+                    sa_motorlease_log_truncate( wp_json_encode( $loggable ) ) ) );
+            return;
+        }
+
+        $code = wp_remote_retrieve_response_code( $response );
+        $body = wp_remote_retrieve_body( $response );
+        if ( $code < 200 || $code >= 300 ) {
+            sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
+                sprintf( 'paceWebUpdateLead HTTP %d %s (lead_id=%d) request=%s response=%s',
+                    $code, $context, $lead_id,
+                    sa_motorlease_log_truncate( wp_json_encode( $loggable ) ),
+                    substr( $body, 0, 1000 ) ) );
+        } else {
+            sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_INFO,
+                sprintf( 'OK %s lead_id=%d http=%d response=%s',
+                    $context, $lead_id, $code, substr( $body, 0, 500 ) ) );
+        }
+    };
+
+    // 1) Send the base lead data (no files).
+    $send( [
+        'lead_id'           => $lead_id,
+        'home_address'      => [
+            'street'   => rgar( $entry, '44' ),
             'suburb'   => rgar( $entry, '45' ),
             'city'     => rgar( $entry, '46' ),
-            'province' => rgar( $entry, '47' ),   // Dropdown
+            'province' => rgar( $entry, '47' ),
             'country'  => 'South Africa',
         ],
         'occupation'        => rgar( $entry, '18' ),
@@ -3802,26 +3987,26 @@ function gf5_forward_to_external_api( $entry, $form ) {
         'employer_name'     => rgar( $entry, '21' ),
         'work_email'        => rgar( $entry, '23' ),
         'work_phone'        => rgar( $entry, '24' ),
-        'work_address'   => [
-            'street'   => rgar( $entry, '48' ),   // New plain text field
+        'work_address'      => [
+            'street'   => rgar( $entry, '48' ),
             'suburb'   => rgar( $entry, '49' ),
             'city'     => rgar( $entry, '50' ),
-            'province' => rgar( $entry, '51' ),   // Dropdown
+            'province' => rgar( $entry, '51' ),
             'country'  => 'South Africa',
         ],
-        'proof_address'   => $proof,
-        'required_by'     => rgar( $entry, '38' ),
-        'lead_id'         => intval( rgar( $entry, '42' ) ),
-        'bank_statements' => [ 'objData' => [] ],
-    ];
+        'proof_address'     => $proof,
+        'required_by'       => rgar( $entry, '38' ),
+        'bank_statements'   => [ 'objData' => [] ],
+    ], 'base-data' );
 
-    // 2) Collect uploads and build Data-URI strings
-    $upload   = wp_upload_dir();
-    $baseurl  = trailingslashit( $upload['baseurl'] );
-    $basedir  = trailingslashit( $upload['basedir'] );
-    $uris     = [];
+    // 2) Send each bank statement file as a separate request to keep
+    //    memory usage bounded — one file at a time rather than all at once.
+    $upload  = wp_upload_dir();
+    $baseurl = trailingslashit( $upload['baseurl'] );
+    $basedir = trailingslashit( $upload['basedir'] );
+    $max_bytes = 32 * 1024 * 1024; // 32 MB per file
 
-    foreach ( [32,33,34] as $fid ) {
+    foreach ( [ 32, 33, 34 ] as $fid ) {
         $urls_string = rgar( $entry, (string) $fid );
         if ( ! $urls_string ) {
             continue;
@@ -3837,65 +4022,19 @@ function gf5_forward_to_external_api( $entry, $form ) {
             if ( ! file_exists( $full ) ) {
                 continue;
             }
-            // read & base64-encode
-            $b64  = base64_encode( file_get_contents( $full ) );
+            if ( filesize( $full ) > $max_bytes ) {
+                sa_motorlease_log( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
+                    sprintf( 'Skipping oversized bank statement (lead_id=%d, file=%s, size=%d bytes)',
+                        $lead_id, basename( $full ), filesize( $full ) ) );
+                continue;
+            }
             $mime = wp_check_filetype( $full )['type'] ?? 'application/octet-stream';
-            $uris[] = "data:{$mime};base64,{$b64}";
-        }
-    }
-
-    // 3) Wrap each URI in an object with key "data"
-    $payload['bank_statements'] = [
-        'objData' => array_map( function( $uri ) {
-            return [ 'data' => $uri ];
-        }, $uris )
-    ];
-
-    // 4) JSON-encode with unescaped slashes and pretty print
-    $json_payload = wp_json_encode(
-        $payload,
-        JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
-    );
-
-    // 5) Send to external API
-    $external = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
-    $lead_id  = (int) ( $payload['lead_id'] ?? 0 );
-
-    // Build a loggable payload that drops the base64 bank-statement blobs (often
-    // hundreds of KB each) and replaces them with a count — useful for debugging
-    // without flooding the log file or persisting customer document bytes.
-    $loggable_payload = $payload;
-    $loggable_payload['bank_statements'] = sprintf( '<%d file(s) omitted>',
-        count( $payload['bank_statements']['objData'] ?? [] ) );
-
-    sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_INFO,
-        sprintf( 'POST paceWebUpdateLead (lead_id=%d) request=%s',
-            $lead_id, wp_json_encode( sa_motorlease_mask_pii( $loggable_payload ) ) ) );
-
-    $response = wp_remote_post( $external, [
-        'headers' => [ 'Content-Type' => 'application/json' ],
-        'body'    => $json_payload,
-        'timeout' => 30,
-    ] );
-
-    if ( is_wp_error( $response ) ) {
-        sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_ERROR,
-            sprintf( 'WP_Error from paceWebUpdateLead (lead_id=%d): %s request=%s',
-                $lead_id, $response->get_error_message(),
-                sa_motorlease_log_truncate( wp_json_encode( $loggable_payload ) ) ) );
-    } else {
-        $code = wp_remote_retrieve_response_code( $response );
-        $body = wp_remote_retrieve_body( $response );
-        if ( $code < 200 || $code >= 300 ) {
-            sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_WARN,
-                sprintf( 'paceWebUpdateLead HTTP %d (lead_id=%d) request=%s response=%s',
-                    $code, $lead_id,
-                    sa_motorlease_log_truncate( wp_json_encode( $loggable_payload ) ),
-                    substr( $body, 0, 1000 ) ) );
-        } else {
-            sa_motorlease_log_lead( 'gf5-forward', SA_MOTORLEASE_LOG_INFO,
-                sprintf( 'OK lead_id=%d http=%d response=%s',
-                    $lead_id, $code, substr( $body, 0, 500 ) ) );
+            $b64  = base64_encode( file_get_contents( $full ) );
+            $send( [
+                'lead_id'         => $lead_id,
+                'bank_statements' => [ 'objData' => [ [ 'data' => "data:{$mime};base64,{$b64}" ] ] ],
+            ], 'bank-statement-field-' . $fid );
+            unset( $b64 ); // release memory before next file
         }
     }
 }
@@ -4030,12 +4169,18 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
         $limit = floatval( $db_limit );
     }
 
-    // Log for debugging
-    error_log( "[samotorlease] qualified-vehicles called with rental_limit={$limit}" );
+    // 2) Serve from cache when possible — this endpoint is hit on every
+    //    results-page load by every visitor, and the catalogue changes hourly.
+    $cache_key = 'samotorlease_qv_' . md5( (string) $limit );
+    $cached    = get_transient( $cache_key );
+    if ( $cached !== false ) {
+        return rest_ensure_response( $cached );
+    }
 
-    // 2) Query products whose _price <= $limit
+    // 3) Query products whose _price <= $limit
     $args = [
         'post_type'      => 'product',
+        'post_status'    => 'publish',
         'posts_per_page' => -1,
         'meta_key'       => '_price',
         'orderby'        => 'meta_value_num',
@@ -4049,11 +4194,10 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
     ];
     $q = new WP_Query( $args );
 
-    // 3) Build response
+    // 4) Build response
     $out = [];
     if ( $q->have_posts() ) {
         $seen_models = [];
-        $seen_prices = [];
 
         foreach ( $q->posts as $post ) {
             $p = wc_get_product( $post->ID );
@@ -4064,13 +4208,12 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
             $model = $p->get_attribute( 'model' );
             $price = $p->get_price();
 
-            // Skip if model or price is already seen
-            if ( ! $model || in_array( $model, $seen_models, true ) || in_array( $price, $seen_prices, true ) ) {
+            // One row per distinct model.
+            if ( ! $model || in_array( $model, $seen_models, true ) ) {
                 continue;
             }
 
             $seen_models[] = $model;
-            $seen_prices[] = $price;
 
             $main_id   = $p->get_image_id();
             $gallery   = $p->get_gallery_image_ids();
@@ -4088,6 +4231,8 @@ function samotorlease_get_qualified_vehicles( WP_REST_Request $request ) {
             ];
         }
     }
+
+    set_transient( $cache_key, $out, 5 * MINUTE_IN_SECONDS );
 
     return rest_ensure_response( $out );
 }
@@ -4272,7 +4417,7 @@ add_action('fix_and_replace_broken_images', function () {
 });
 
 add_action('init', function () {
-    if (isset($_GET['fix_broken_images']) && current_user_can('manage_options')) {
+    if (isset($_GET['fix_broken_images']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         if (!wp_next_scheduled('fix_and_replace_broken_images')) {
             wp_schedule_single_event(time() + 5, 'fix_and_replace_broken_images');
             echo '✅ One-time repair job scheduled.';
@@ -4283,9 +4428,6 @@ add_action('init', function () {
     }
 });
 
-register_deactivation_hook(__FILE__, function () {
-    wp_clear_scheduled_hook('fix_and_replace_broken_images');
-});
 
 // ---------------------------------------------------------------------------
 // --- Admin URL: ?test_image_feed
@@ -4350,6 +4492,25 @@ add_action('update_number_of_payments_attribute', function () {
     $updated = 0;
     $skipped = 0;
 
+    // Fetch the feed once and index it by SKU.
+    $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData';
+    $feed_raw = file_get_contents($feed_url);
+    if (!$feed_raw) {
+        log_to_file("[Backfill] Failed to fetch feed", 'backfill_payments.log');
+        return;
+    }
+    $feed_data = json_decode($feed_raw, true);
+    if (!is_array($feed_data)) {
+        log_to_file("[Backfill] Failed to decode feed JSON", 'backfill_payments.log');
+        return;
+    }
+    $feed_by_sku = [];
+    foreach ($feed_data as $entry) {
+        if (isset($entry['id'])) {
+            $feed_by_sku[(string)$entry['id']] = $entry;
+        }
+    }
+
     $args = [
         'post_type'      => 'product',
         'post_status'    => 'publish',
@@ -4366,23 +4527,7 @@ add_action('update_number_of_payments_attribute', function () {
             continue;
         }
 
-        // Fetch full vehicle data from your original feed
-        $feed_url = 'https://paceapp-server.azurewebsites.net/api/entity/paceWebPrepData'; // 🔁 Replace with actual feed
-        $feed = file_get_contents($feed_url);
-        if (!$feed) {
-            log_to_file("[Backfill] Failed to fetch feed", 'backfill_payments.log');
-            break;
-        }
-
-        $data = json_decode($feed, true);
-        $vehicle = null;
-
-        foreach ($data as $entry) {
-            if (isset($entry['id']) && $entry['id'] == $sku) {
-                $vehicle = $entry;
-                break;
-            }
-        }
+        $vehicle = $feed_by_sku[(string)$sku] ?? null;
 
         if (!$vehicle || empty($vehicle['rebate_target'])) {
             $skipped++;
@@ -4406,7 +4551,7 @@ add_action('update_number_of_payments_attribute', function () {
 // --- Admin URL: ?run_payments_backfill
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['run_payments_backfill']) && current_user_can('manage_options')) {
+    if (isset($_GET['run_payments_backfill']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         if (!wp_next_scheduled('update_number_of_payments_attribute')) {
             wp_schedule_single_event(time() + 5, 'update_number_of_payments_attribute');
             echo '✅ One-time payments backfill scheduled.';
@@ -4421,7 +4566,7 @@ add_action('init', function () {
 // --- Admin URL: ?format_deposit_special
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['format_deposit_special']) && current_user_can('manage_options')) {
+    if (isset($_GET['format_deposit_special']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         $updated = 0;
         $skipped = 0;
 
@@ -4470,7 +4615,7 @@ add_action('init', function () {
 // --- Admin URL: ?cleanup_initiation_fee_special
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['cleanup_initiation_fee_special']) && current_user_can('manage_options')) {
+    if (isset($_GET['cleanup_initiation_fee_special']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         @set_time_limit(0);
         ignore_user_abort(true);
 
@@ -4578,8 +4723,26 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
         return new WP_REST_Response(['error' => 'Missing lead ID'], 400);
     }
 
-    $lead_id      = (int) $data['lead_id'];
-    $json_payload = wp_json_encode($data, JSON_UNESCAPED_SLASHES);
+    $lead_id = (int) $data['lead_id'];
+
+    // Whitelist keys forwarded to PACE — never proxy arbitrary client-supplied fields.
+    $address_keys = ['street', 'suburb', 'city', 'province', 'country'];
+    $allowed = [
+        'lead_id'           => $lead_id,
+        'home_address'      => array_intersect_key((array)($data['home_address'] ?? []), array_flip($address_keys)),
+        'occupation'        => isset($data['occupation'])        ? (string)$data['occupation']        : null,
+        'employment_status' => isset($data['employment_status']) ? (string)$data['employment_status'] : null,
+        'employer_name'     => isset($data['employer_name'])     ? (string)$data['employer_name']     : null,
+        'work_email'        => isset($data['work_email'])        ? (string)$data['work_email']        : null,
+        'work_phone'        => isset($data['work_phone'])        ? (string)$data['work_phone']        : null,
+        'work_address'      => array_intersect_key((array)($data['work_address'] ?? []), array_flip($address_keys)),
+        'proof_address'     => isset($data['proof_address'])     ? (string)$data['proof_address']     : null,
+        'bank_statements'   => isset($data['bank_statements'])   ? $data['bank_statements']           : null,
+    ];
+    // Drop keys that were absent in the original payload to avoid sending nulls to PACE.
+    $allowed = array_filter($allowed, static fn($v) => $v !== null);
+
+    $json_payload = wp_json_encode($allowed, JSON_UNESCAPED_SLASHES);
 
     sa_motorlease_log_lead('partial-save', SA_MOTORLEASE_LOG_INFO,
         sprintf('POST paceWebUpdateLead (lead_id=%d) request=%s',
@@ -4625,9 +4788,9 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
 // ---------------------------------------------------------------------------
 add_action('rest_api_init', function () {
     register_rest_route('samotorlease/v1', '/update-deposit-special', [
-        'methods'  => 'GET',
-        'callback' => 'update_initiation_fee_special_for_existing_products',
-        'permission_callback' => '__return_true',
+        'methods'             => 'GET',
+        'callback'            => 'update_initiation_fee_special_for_existing_products',
+        'permission_callback' => function () { return current_user_can('manage_options'); },
     ]);
 });
 
@@ -4676,7 +4839,7 @@ function update_initiation_fee_special_for_existing_products() {
 // --- Admin URL & handler: cleanup_sold_products
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['cleanup_sold_products']) && current_user_can('manage_options')) {
+    if (isset($_GET['cleanup_sold_products']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         cleanup_sold_products();
         echo '✅ Sold product cleanup triggered. Check `sold_cleanup.log` in uploads folder.';
         exit;
@@ -4794,7 +4957,7 @@ function cleanup_sold_status_from_feed() {
 }
 
 add_action('init', function () {
-    if (isset($_GET['update_sold_from_feed']) && current_user_can('manage_options')) {
+    if (isset($_GET['update_sold_from_feed']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         cleanup_sold_status_from_feed();
         echo '✅ Sold status cleanup complete. Check `sold-feed-cleanup.log`.';
         exit;
@@ -4805,7 +4968,7 @@ add_action('init', function () {
 // --- ?remove_by_reg_cleanup + remove_products_by_registration
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['remove_by_reg_cleanup']) && current_user_can('manage_options')) {
+    if (isset($_GET['remove_by_reg_cleanup']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         // ✅ Replace this with your actual list of registrations
         $registrations_to_remove = [];
 
@@ -4864,7 +5027,7 @@ function remove_products_by_registration($registration_list) {
 // --- ?log_missing_products + log_products_missing_from_feed
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['log_missing_products']) && current_user_can('manage_options')) {
+    if (isset($_GET['log_missing_products']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         log_products_missing_from_feed();
         echo '✅ Product log complete. Check `product_cleanup.log` in uploads folder.';
         exit;
@@ -4947,7 +5110,7 @@ add_shortcode('cheapest_price', 'get_cheapest_product_price_plain_shortcode');
 // --- ?remove_missing_products + remove_missing_products_from_feed
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['remove_missing_products']) && current_user_can('manage_options')) {
+    if (isset($_GET['remove_missing_products']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         remove_missing_products_from_feed();
         echo '✅ Product cleanup complete. Check `product_cleanup.log` in uploads folder.';
         exit;
@@ -5000,7 +5163,7 @@ function remove_missing_products_from_feed() {
 // --- ?backfill_image_alt + update_all_vehicle_image_alts
 // ---------------------------------------------------------------------------
 add_action('init', function () {
-    if (isset($_GET['backfill_image_alt']) && current_user_can('manage_options')) {
+    if (isset($_GET['backfill_image_alt']) && current_user_can('manage_options') && isset($_GET['_wpnonce']) && wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
         update_all_vehicle_image_alts();
         echo '✅ Image ALT update complete. Check `image_alt_backfill.log` in uploads folder.';
         exit;
@@ -5655,6 +5818,53 @@ function sa_motorlease_render_status_page() {
         <?php else : ?>
             <p><em>Log file is empty or not yet written.</em></p>
         <?php endif; ?>
+
+        <h2 class="title">Tools</h2>
+        <p style="color:#666;font-size:13px;">All links below include a security token and expire after 1 day. Do not share these URLs.</p>
+        <?php
+        $tools = [
+            // [ label, query_arg, description, dangerous, new_tab ]
+            [ 'Run import now (create+update)',  'vi_run_import',                  'Run create + update import in-process. Bypasses WP-Cron loopback. Tail sa-motorlease.log for output.', false, true  ],
+            [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
+            [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
+            [ 'Cleanup sold products',          'cleanup_sold_products',          'Mark in-feed sold vehicles and clean up sold status.',                  false, false ],
+            [ 'Update sold status from feed',   'update_sold_from_feed',          'Re-sync sold/available status against the live PACE feed.',             false, false ],
+            [ 'Log missing products',           'log_missing_products',           'Write a log of products absent from the feed (no writes).',             false, false ],
+            [ 'Remove missing products',        'remove_missing_products',        'Delete WooCommerce products that are no longer in the PACE feed.',      true,  false ],
+            [ 'Remove products by reg',         'remove_by_reg_cleanup',          'Strip registration-number attributes from products.',                   false, false ],
+            [ 'Format deposit special',         'format_deposit_special',         'Re-format the Initiation Fee Special attribute values.',                false, false ],
+            [ 'Cleanup initiation fee special', 'cleanup_initiation_fee_special', 'Remove Initiation Fee Special attributes from products.',               false, false ],
+            [ 'Fix broken images',              'fix_broken_images',              'Trigger the image-repair cron immediately.',                             false, false ],
+            [ 'Backfill image ALT text',        'backfill_image_alt',             'Set ALT text on all vehicle images that are missing it.',                false, false ],
+            [ 'Payments backfill',              'run_payments_backfill',          'Schedule the Number of Payments attribute backfill cron.',              false, false ],
+            [ 'WBW cleanup ghosts',             'wbw_cleanup_ghosts',             'Remove WBW index rows for products that no longer exist.',              false, false ],
+            [ 'Deduplicate products',           'deduplicate_products',           'Remove duplicate WooCommerce products with the same SKU.',              true,  false ],
+            [ 'Update license plates',          'update_license_plates',          'Backfill license plate attributes from the PACE feed.',                 false, false ],
+        ];
+        ?>
+        <table class="widefat striped" style="max-width:900px">
+            <thead><tr><th style="width:220px">Action</th><th>Description</th><th style="width:80px"></th></tr></thead>
+            <tbody>
+            <?php foreach ( $tools as [ $label, $param, $desc, $danger, $new_tab ] ) :
+                $url = wp_nonce_url( add_query_arg( $param, '1', admin_url() ), 'sa_motorlease_admin_action' );
+            ?>
+                <tr>
+                    <td><strong><?php echo esc_html( $label ); ?></strong></td>
+                    <td style="font-size:13px;color:#555"><?php echo esc_html( $desc ); ?></td>
+                    <td>
+                        <a href="<?php echo esc_url( $url ); ?>"
+                           class="button <?php echo $danger ? 'button-primary' : 'button-secondary'; ?>"
+                           <?php if ( $new_tab ) : ?>target="_blank" rel="noopener"<?php endif; ?>
+                           <?php if ( $danger ) : ?>
+                           onclick="return confirm(<?php echo wp_json_encode( 'Run "' . $label . '"? This cannot be undone.' ); ?>)"
+                           <?php endif; ?>>
+                            <?php echo $new_tab ? 'Open' : 'Run'; ?>
+                        </a>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
     </div>
     <?php
 }
