@@ -1243,7 +1243,7 @@ function vi_create_new_products() {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create SKIPPED: already running (lock present). ===');
         return;
     }
-    set_transient($lock_key, getmypid() ?: 1, VI_MAX_CREATE_SEC + 60);
+    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, VI_MAX_CREATE_SEC + 60);
 
     @ignore_user_abort(true);
     if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_CREATE_SEC + 30);
@@ -1418,7 +1418,7 @@ function vi_update_existing_products() {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update SKIPPED: already running (lock present). ===');
         return;
     }
-    set_transient($lock_key, getmypid() ?: 1, VI_MAX_UPDATE_SEC + 60);
+    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, VI_MAX_UPDATE_SEC + 60);
 
     @ignore_user_abort(true);
     if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_UPDATE_SEC + 30);
