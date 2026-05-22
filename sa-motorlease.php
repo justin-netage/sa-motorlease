@@ -2255,6 +2255,64 @@ add_action('init', function () {
     exit;
 }, 20);
 
+// === URL trigger: run create/update import in-process =======================
+// Bypasses WP-Cron / WP-Crontrol entirely (no loopback request), so hosts with
+// a broken self-loopback can still trigger an import from the browser.
+// Usage:
+//   ?vi_run_import=1                - run create then update
+//   ?vi_run_import=1&mode=create    - create only
+//   ?vi_run_import=1&mode=update    - update only
+//   ?vi_run_import=1&clear_locks=1  - delete stuck create/update lock transients first
+add_action('init', function () {
+    if (!isset($_GET['vi_run_import'])) return;
+
+    if (!is_user_logged_in() || !current_user_can('manage_options')) {
+        status_header(403);
+        exit('Forbidden - admin access required');
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
+
+    $mode = isset($_GET['mode']) ? sanitize_key($_GET['mode']) : 'both';
+    if (!in_array($mode, ['create', 'update', 'both'], true)) $mode = 'both';
+    $clear_locks = !empty($_GET['clear_locks']);
+
+    @ignore_user_abort(true);
+    if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_CREATE_SEC + VI_MAX_UPDATE_SEC + 60);
+
+    header('Content-Type: text/plain; charset=utf-8');
+    echo "=== vi_run_import (mode={$mode}, clear_locks=" . ($clear_locks ? 'yes' : 'no') . ") ===\n\n";
+
+    if ($clear_locks) {
+        $had_create = (bool) get_transient('vi_create_running_lock');
+        $had_update = (bool) get_transient('vi_update_running_lock');
+        delete_transient('vi_create_running_lock');
+        delete_transient('vi_update_running_lock');
+        echo "Locks cleared (create_was_set=" . ($had_create ? 'yes' : 'no') . ", update_was_set=" . ($had_update ? 'yes' : 'no') . ")\n\n";
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "URL trigger: locks cleared (create={$had_create}, update={$had_update})");
+    }
+
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "URL trigger: vi_run_import mode={$mode}");
+
+    if ($mode === 'create' || $mode === 'both') {
+        echo "--- running vi_create_new_products() ---\n";
+        $t0 = microtime(true);
+        vi_create_new_products();
+        printf("elapsed: %.2fs\n\n", microtime(true) - $t0);
+    }
+    if ($mode === 'update' || $mode === 'both') {
+        echo "--- running vi_update_existing_products() ---\n";
+        $t0 = microtime(true);
+        vi_update_existing_products();
+        printf("elapsed: %.2fs\n\n", microtime(true) - $t0);
+    }
+
+    echo "Log file: " . sa_motorlease_log_path() . "\n";
+    echo "Done. Tail the log for full output.\n";
+    exit;
+}, 20);
+
 // === Bulk image sync (detect + apply feed image changes) ====================
 
 /**
@@ -5742,6 +5800,7 @@ function sa_motorlease_render_status_page() {
         <?php
         $tools = [
             // [ label, query_arg, description, dangerous, new_tab ]
+            [ 'Run import now (create+update)',  'vi_run_import',                  'Run create + update import in-process. Bypasses WP-Cron loopback. Tail sa-motorlease.log for output.', false, true  ],
             [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
             [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
             [ 'Cleanup sold products',          'cleanup_sold_products',          'Mark in-feed sold vehicles and clean up sold status.',                  false, false ],
