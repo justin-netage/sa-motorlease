@@ -60,11 +60,11 @@ jQuery(function($){
   }
   const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  // South African ID: format-only check (13 digits). PACE itself does the
-  // deeper validation against the Home Affairs database, so we deliberately
-  // don't run a client-side Luhn checksum here — it was rejecting real IDs
-  // for users in the wild.
-  const idRx = /^\d{13}$/;
+  // ID/Passport: 6-13 alphanumeric characters. Covers SA IDs (13 digits),
+  // SA passports (9 alphanumeric), and most international passports (6-9
+  // alphanumeric). PACE runs the authoritative validation against Home
+  // Affairs / passport databases on its end, so this is format-only.
+  const idRx = /^[A-Za-z0-9]{6,13}$/;
 
   // --- Prefill helpers for booleans -> selects ---
   function setYesNoSelectFromBool($select, boolVal){
@@ -104,7 +104,7 @@ jQuery(function($){
       fields: [
         { sel:'#input_1_1_3',   name:'First Name',     type:'text'     },
         { sel:'#input_1_1_6',   name:'Surname',        type:'text'     },
-        { sel:'#input_1_18',    name:'ID Number',      type:'id'       },
+        { sel:'#input_1_18',    name:'ID/Passport',    type:'id'       },
         { sel:'#input_1_3',     name:'Phone',          type:'tel'      },
         { sel:'#input_1_4',     name:'Email',          type:'email'    },
         { sel:'#input_1_6',     name:'Location',       type:'select'   },
@@ -121,7 +121,7 @@ jQuery(function($){
       fields: [
         { sel:'#input_3_1_3',   name:'First Name',     type:'text'     },
         { sel:'#input_3_1_6',   name:'Surname',        type:'text'     },
-        { sel:'#input_3_11',    name:'ID Number',      type:'id'       },
+        { sel:'#input_3_11',    name:'ID/Passport',    type:'id'       },
         { sel:'#input_3_3',     name:'Phone',          type:'tel'      },
         { sel:'#input_3_4',     name:'Email',          type:'email'    },
         { sel:'#input_3_5',     name:'Location',       type:'select'   },
@@ -302,7 +302,7 @@ jQuery(function($){
           case 'email':   valid = emailRx.test(val); msg = 'Please enter a valid email address.'; break;
           case 'id':
             if (!val.length) { valid = false; msg = `${fld.name} is required.`; }
-            else if (!idRx.test(val)) { valid = false; msg = 'ID Number must be 13 digits.'; }
+            else if (!idRx.test(val)) { valid = false; msg = 'ID/Passport must be 6-13 letters or digits.'; }
             break;
           case 'select':  valid = val !== ''; msg = `Please select a ${fld.name.toLowerCase()}.`; break;
           case 'checkbox':valid = val === true; msg = 'You must accept the terms.'; break;
@@ -326,7 +326,44 @@ jQuery(function($){
       if (_vfTimer) clearTimeout(_vfTimer);
       _vfTimer = setTimeout(validateAllFields, 60);
     };
-    form.on('input change', 'input, select, textarea', validateDebounced);
+    // Cover normal typing/changes plus blur/focus (browser autofill in
+    // Chrome/Safari often does NOT fire input/change, but does trigger
+    // focus/blur as the user tabs through or clicks the form).
+    form.on('input change blur focusin focusout animationstart', 'input, select, textarea', validateDebounced);
+
+    // Autofill detection (Chrome/Safari/Edge): the browser applies the
+    // :-webkit-autofill pseudo-class, which we tie to a no-op CSS animation
+    // so an animationstart event fires when autofill runs. Inject the CSS
+    // once per page.
+    if (!document.getElementById('sa-autofill-detect-style')) {
+      const style = document.createElement('style');
+      style.id = 'sa-autofill-detect-style';
+      style.textContent = `
+        @keyframes sa-autofill-start { from {} to {} }
+        @keyframes sa-autofill-cancel { from {} to {} }
+        input:-webkit-autofill { animation-name: sa-autofill-start; animation-duration: 1ms; }
+        input:not(:-webkit-autofill) { animation-name: sa-autofill-cancel; animation-duration: 1ms; }
+      `;
+      document.head.appendChild(style);
+    }
+    // Native listener as backup — jQuery delegation for animationstart
+    // can be unreliable across older WebKit versions.
+    form[0].addEventListener('animationstart', (ev) => {
+      if (ev.animationName === 'sa-autofill-start') validateDebounced();
+    }, true);
+
+    // Poll briefly after load to catch autofill that bypasses every event
+    // (some password managers, some mobile browsers). We stop once we've
+    // had a stable read or after a short window.
+    let _pollCount = 0;
+    const _pollMax = 20; // ~3s at 150ms
+    const _pollTimer = setInterval(() => {
+      validateAllFields();
+      if (++_pollCount >= _pollMax) clearInterval(_pollTimer);
+    }, 150);
+    // First real user interaction stops the poll early — by then any
+    // autofill has already happened.
+    form.one('pointerdown keydown', () => clearInterval(_pollTimer));
 
     if (window.gform && gform.addAction) {
       gform.addAction('gform_post_conditional_logic', formId => {
@@ -342,6 +379,10 @@ jQuery(function($){
     }
 
     validateAllFields(); // initial
+    // Re-run shortly after load: autofill commonly arrives a frame or two
+    // after DOM ready, so a single deferred re-check catches the common case.
+    setTimeout(validateAllFields, 250);
+    $(window).on('pageshow', validateAllFields); // bfcache restores
 
     // --- Submit handler ---
     form.on('submit', function(e){
