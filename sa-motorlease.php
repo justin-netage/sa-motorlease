@@ -1212,7 +1212,8 @@ function vi_fetch_feed() {
     log_import_update("Feed HTTP {$code}; body_len=" . strlen((string)$body) . " in {$elapsed_ms}ms");
 
     if ($code !== 200) {
-        log_import_update('Feed HTTP not 200; aborting.');
+        $preview = substr((string)$body, 0, 300);
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Feed HTTP not 200 (code={$code}, body_len=" . strlen((string)$body) . ", elapsed={$elapsed_ms}ms); aborting. Body preview: " . $preview);
         return null;
     }
 
