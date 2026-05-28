@@ -3591,7 +3591,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.2.4',                     // Version — bumped: accept passport numbers (6-13 alphanumeric)
+            '1.2.5',                     // Version — bumped: ID/Passport must be 9-13 alphanumeric
             true                      // Load in footer
         );
     }
@@ -5180,11 +5180,11 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
         return 'ID/Passport is required.';
     }
     // Accept SA IDs (13 digits), SA passports (9 alphanumeric), and most
-    // international passports (6-9 alphanumeric). Mirrors the JS idRx in
+    // international passports (9 alphanumeric). Mirrors the JS idRx in
     // lead-qualification.js so client and server agree. PACE runs the
     // authoritative check on its end.
-    if ( ! preg_match( '/^[A-Za-z0-9]{6,13}$/', $id ) ) {
-        return 'ID/Passport must be 6-13 letters or digits.';
+    if ( ! preg_match( '/^[A-Za-z0-9]{9,13}$/', $id ) ) {
+        return 'ID/Passport must be 9-13 letters or digits.';
     }
 
     if ( ! is_email( $data['your_email'] ) ) {
