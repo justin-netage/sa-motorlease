@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.3.0-beta.1
+ * Version: 2.3.0-beta.2
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.3.0-beta.1' );
+define( 'SA_MOTORLEASE_VERSION', '2.3.0-beta.2' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -3725,7 +3725,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.2.4',                     // Version — bumped: accept passport numbers (6-13 alphanumeric)
+            '1.2.5',                     // Version — bumped: tighten ID/Passport to 9-13 alphanumeric
             true                      // Load in footer
         );
     }
@@ -5343,11 +5343,11 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
         return 'ID/Passport is required.';
     }
     // Accept SA IDs (13 digits), SA passports (9 alphanumeric), and most
-    // international passports (6-9 alphanumeric). Mirrors the JS idRx in
+    // international passports (9 alphanumeric). Mirrors the JS idRx in
     // lead-qualification.js so client and server agree. PACE runs the
     // authoritative check on its end.
-    if ( ! preg_match( '/^[A-Za-z0-9]{6,13}$/', $id ) ) {
-        return 'ID/Passport must be 6-13 letters or digits.';
+    if ( ! preg_match( '/^[A-Za-z0-9]{9,13}$/', $id ) ) {
+        return 'ID/Passport must be 9-13 letters or digits.';
     }
 
     if ( ! is_email( $data['your_email'] ) ) {
