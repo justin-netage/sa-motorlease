@@ -53,6 +53,9 @@ This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisEl
 
 == Changelog ==
 
+= 2.3.0-beta.2 =
+* Tightened the ID/Passport validation on the lead qualification form from 6-13 to 9-13 alphanumeric characters, rejecting inputs shorter than a valid SA passport / ID. Applied to both the client-side `idRx` in lead-qualification.js and the matching server-side check in the `/qualify-lead` REST endpoint so they stay in sync. Bumped the enqueued lead-qualification.js version to 1.2.5 to bust browser caches.
+
 = 2.3.0-beta.1 =
 Pre-release containing the post-2.2.7 plugin audit fixes. Includes everything from 2.2.4–2.2.7 (passport ID support, autofill revalidation, lead endpoint logging, Status page log tail truncation, PII masking). Stable tag remains 2.2.3 — install manually on a dev site to test.
 
