@@ -60,11 +60,11 @@ jQuery(function($){
   }
   const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-  // ID/Passport: 6-13 alphanumeric characters. Covers SA IDs (13 digits),
-  // SA passports (9 alphanumeric), and most international passports (6-9
+  // ID/Passport: 9-13 alphanumeric characters. Covers SA IDs (13 digits),
+  // SA passports (9 alphanumeric), and most international passports (9
   // alphanumeric). PACE runs the authoritative validation against Home
   // Affairs / passport databases on its end, so this is format-only.
-  const idRx = /^[A-Za-z0-9]{6,13}$/;
+  const idRx = /^[A-Za-z0-9]{9,13}$/;
 
   // --- Prefill helpers for booleans -> selects ---
   function setYesNoSelectFromBool($select, boolVal){
@@ -302,7 +302,7 @@ jQuery(function($){
           case 'email':   valid = emailRx.test(val); msg = 'Please enter a valid email address.'; break;
           case 'id':
             if (!val.length) { valid = false; msg = `${fld.name} is required.`; }
-            else if (!idRx.test(val)) { valid = false; msg = 'ID/Passport must be 6-13 letters or digits.'; }
+            else if (!idRx.test(val)) { valid = false; msg = 'ID/Passport must be 9-13 letters or digits.'; }
             break;
           case 'select':  valid = val !== ''; msg = `Please select a ${fld.name.toLowerCase()}.`; break;
           case 'checkbox':valid = val === true; msg = 'You must accept the terms.'; break;
