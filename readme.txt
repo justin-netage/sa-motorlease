@@ -52,12 +52,10 @@ This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisEl
 
 == Changelog ==
 
-= 2.3.0-beta.2 =
-* Tightened the ID/Passport validation on the lead qualification form from 6-13 to 9-13 alphanumeric characters, rejecting inputs shorter than a valid SA passport / ID. Applied to both the client-side `idRx` in lead-qualification.js and the matching server-side check in the `/qualify-lead` REST endpoint so they stay in sync. Bumped the enqueued lead-qualification.js version to 1.2.5 to bust browser caches.
+= 2.3.0 =
+Stable release of the 2.3.0 line (promotes 2.3.0-beta.1 and 2.3.0-beta.2). Bundles the post-2.2.7 plugin audit fixes — REST endpoint and admin URL trigger hardening, PII handling, performance and reliability work — together with the tightened ID/Passport validation. Includes everything from 2.2.4–2.2.7 (passport ID support, autofill revalidation, lead endpoint logging, Status page log tail truncation, PII masking). Stable tag is now 2.3.0.
 
-= 2.3.0-beta.1 =
-Pre-release containing the post-2.2.7 plugin audit fixes. Includes everything from 2.2.4–2.2.7 (passport ID support, autofill revalidation, lead endpoint logging, Status page log tail truncation, PII masking). Stable tag remains 2.2.3 — install manually on a dev site to test.
-
+* **ID/Passport validation.** Tightened the lead qualification form validation from 6-13 to 9-13 alphanumeric characters, rejecting inputs shorter than a valid SA passport / ID. Applied to both the client-side `idRx` in lead-qualification.js and the matching server-side check in the `/qualify-lead` REST endpoint so they stay in sync. Bumped the enqueued lead-qualification.js version to 1.2.5 to bust browser caches.
 * **Security — REST endpoints.** `/update-deposit-special` now requires `manage_options` (was public). `/partial-save` whitelists the keys forwarded to PACE (`lead_id`, addresses, employment, bank_statements) so arbitrary client-supplied fields can no longer be proxied upstream.
 * **Security — admin URL triggers.** All 15 destructive admin URL triggers now verify a nonce (`?cleanup_sold_products`, `?remove_missing_products`, `?wbw_cleanup_ghosts`, `?vi_repair_images`, `?vi_sync_images`, `?vi_sync_batch`, and 9 others). Status page gains a Tools section that generates each link with `wp_nonce_url()`.
 * **PII.** Lead qualification data (ID number, phone, email, take-home pay) is no longer persisted in `localStorage` — `sessionStorage` only. Existing values in `localStorage` are evicted on load.
