@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.2.8
+Stable tag: 2.3.0
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,19 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.3.0 =
+Stable release of the 2.3.0 line (promotes 2.3.0-beta.1 and 2.3.0-beta.2). Bundles the post-2.2.7 plugin audit fixes — REST endpoint and admin URL trigger hardening, PII handling, performance and reliability work — together with the tightened ID/Passport validation. Includes everything from 2.2.4–2.2.7 (passport ID support, autofill revalidation, lead endpoint logging, Status page log tail truncation, PII masking). Stable tag is now 2.3.0.
+
+* **ID/Passport validation.** Tightened the lead qualification form validation from 6-13 to 9-13 alphanumeric characters, rejecting inputs shorter than a valid SA passport / ID. Applied to both the client-side `idRx` in lead-qualification.js and the matching server-side check in the `/qualify-lead` REST endpoint so they stay in sync. Bumped the enqueued lead-qualification.js version to 1.2.5 to bust browser caches.
+* **Security — REST endpoints.** `/update-deposit-special` now requires `manage_options` (was public). `/partial-save` whitelists the keys forwarded to PACE (`lead_id`, addresses, employment, bank_statements) so arbitrary client-supplied fields can no longer be proxied upstream.
+* **Security — admin URL triggers.** All 15 destructive admin URL triggers now verify a nonce (`?cleanup_sold_products`, `?remove_missing_products`, `?wbw_cleanup_ghosts`, `?vi_repair_images`, `?vi_sync_images`, `?vi_sync_batch`, and 9 others). Status page gains a Tools section that generates each link with `wp_nonce_url()`.
+* **PII.** Lead qualification data (ID number, phone, email, take-home pay) is no longer persisted in `localStorage` — `sessionStorage` only. Existing values in `localStorage` are evicted on load.
+* **Gravity Forms #5 forwarder.** Bank statements (fields 32/33/34) are now sent as separate `paceWebUpdateLead` requests (one per file) instead of buffering all files into a single JSON payload. Drops `JSON_PRETTY_PRINT`. Per-file cap raised to 32 MB. Adds `ignore_user_abort` + `set_time_limit(0)` so the chain survives the user closing the browser after submit. Logging integrates with the 2.2.5 lead-endpoint pipeline (PII masking, base64 blobs omitted from log entries).
+* **Performance.** `/qualified-vehicles` REST response is now cached per `rental_limit` for 5 minutes. `update_number_of_payments_attribute` fetches the PACE feed once before the product loop (was re-fetching inside every iteration — O(N²)). WBW reindex no longer triggered twice per import cycle.
+* **Correctness.** `wc_get_product()` returning `false` no longer fatals the update prune loop. `/qualified-vehicles` dedup no longer drops distinct models that share a price. The query is restricted to `post_status=publish`. `delete_expired_sold_products` uses `wp_get_post_terms` + `DateTime::createFromFormat` instead of `strtotime` on a comma-joined term string.
+* **Reliability.** Plugin deactivation now consolidated into one hook that unschedules all 9 of the plugin's cron events (was missing image sync, repair, sold-date and expired-sold). `_vi_write_date` no longer advanced when the feed returns no images for a product — next run will retry image sync. `vi_attach_lock` set by the sync and repair mutation paths, not just the create path. `wp_lead_qualifications` table gains `UNIQUE KEY` on `lead_id` to prevent duplicates on JS retry. `vi_migrate_rebate_target` throttles retries to once per hour on feed failure (was retrying on every page load).
+* **Logging.** Removed unconditional `error_log()` on every `/qualified-vehicles` REST hit.
 
 = 2.2.8 =
 * ID/Passport field on the lead qualification form now requires 9-13 alphanumeric characters (previously 6-13). Client-side (lead-qualification.js) and server-side `/qualify-lead` validators updated together. Bumped the enqueued lead-qualification.js version to 1.2.5 to bust browser caches.
