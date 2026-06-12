@@ -3232,23 +3232,53 @@ function sa_motorlease_product_importer_create_lead_table() {
 
     // Check if the table already exists
     $table_exists = $wpdb->get_var( $wpdb->prepare(
-        "SHOW TABLES LIKE %s", 
+        "SHOW TABLES LIKE %s",
         $table_name
     ));
 
     require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
 
+    // dbDelta cannot add the lead_id unique key while duplicate lead_id rows
+    // exist (test/sandbox PACE environments return the same lead_id for every
+    // submission, so copied-over staging data accumulates duplicates and the
+    // ADD UNIQUE KEY fails on every activation). When the key is still
+    // missing, collapse duplicates first, keeping the newest row per lead_id
+    // to match the upsert semantics used on insert.
+    if ( $table_exists ) {
+        $has_uniq = $wpdb->get_var( $wpdb->prepare(
+            "SHOW INDEX FROM `$table_name` WHERE Key_name = %s",
+            'lead_id_uniq'
+        ));
+        if ( ! $has_uniq ) {
+            $removed = $wpdb->query(
+                "DELETE older FROM `$table_name` older
+                 INNER JOIN `$table_name` newer
+                    ON newer.lead_id = older.lead_id AND newer.id > older.id"
+            );
+            if ( $removed ) {
+                sa_motorlease_log_lead( 'activate', SA_MOTORLEASE_LOG_WARN,
+                    sprintf( 'Removed %d duplicate lead_id row(s) from %s before adding lead_id_uniq.',
+                        (int) $removed, $table_name ) );
+            }
+        }
+    }
+
     // Always run dbDelta so it can add missing columns/keys to existing tables.
+    // dbDelta is strict about layout: the primary key must be its own line in
+    // the exact form "PRIMARY KEY  (id)" (two spaces) — declared inline on the
+    // column it re-issues a failing ALTER on every activation. Types must also
+    // match what MySQL reports back (BOOLEAN is stored as tinyint(1)).
     $sql = "CREATE TABLE $table_name (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        lead_id BIGINT NOT NULL,
-        state VARCHAR(50) NOT NULL,
-        qualify_salary BOOLEAN NOT NULL,
-        qualify_license BOOLEAN NOT NULL,
-        qualify_area BOOLEAN NOT NULL,
-        rental_limit DECIMAL(10,2) NOT NULL,
-        fast_track BOOLEAN NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        id int(11) NOT NULL AUTO_INCREMENT,
+        lead_id bigint(20) NOT NULL,
+        state varchar(50) NOT NULL,
+        qualify_salary tinyint(1) NOT NULL,
+        qualify_license tinyint(1) NOT NULL,
+        qualify_area tinyint(1) NOT NULL,
+        rental_limit decimal(10,2) NOT NULL,
+        fast_track tinyint(1) NOT NULL,
+        created_at timestamp DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY  (id),
         UNIQUE KEY lead_id_uniq (lead_id)
     ) $charset_collate;";
 
@@ -3876,16 +3906,29 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
         ], 400);
     }
 
-    // Save response summary (extend if you add columns for e_hailing/other_location)
-    $wpdb->insert($table, [
-        'lead_id'         => $body['lead_id'],
-        'state'           => isset($body['state']) ? sanitize_text_field($body['state']) : 'unknown',
-        'qualify_salary'  => filter_var($body['qualify_salary'] ?? false, FILTER_VALIDATE_BOOLEAN),
-        'qualify_license' => filter_var($body['qualify_license'] ?? false, FILTER_VALIDATE_BOOLEAN),
-        'qualify_area'    => filter_var($body['qualify_area'] ?? false, FILTER_VALIDATE_BOOLEAN),
-        'rental_limit'    => floatval($body['rental_limit'] ?? 0),
-        'fast_track'      => filter_var($body['fast_track'] ?? false, FILTER_VALIDATE_BOOLEAN),
-    ]);
+    // Save response summary (extend if you add columns for e_hailing/other_location).
+    // Upsert keyed on lead_id_uniq: test/sandbox PACE environments return the
+    // same lead_id for every submission, so a plain insert would hit the
+    // unique key and turn every repeat submission into a 500.
+    $wpdb->query( $wpdb->prepare(
+        "INSERT INTO `$table`
+            (lead_id, state, qualify_salary, qualify_license, qualify_area, rental_limit, fast_track)
+         VALUES (%d, %s, %d, %d, %d, %f, %d)
+         ON DUPLICATE KEY UPDATE
+            state           = VALUES(state),
+            qualify_salary  = VALUES(qualify_salary),
+            qualify_license = VALUES(qualify_license),
+            qualify_area    = VALUES(qualify_area),
+            rental_limit    = VALUES(rental_limit),
+            fast_track      = VALUES(fast_track)",
+        (int) $body['lead_id'],
+        isset($body['state']) ? sanitize_text_field($body['state']) : 'unknown',
+        filter_var($body['qualify_salary'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 1 : 0,
+        filter_var($body['qualify_license'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 1 : 0,
+        filter_var($body['qualify_area'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 1 : 0,
+        floatval($body['rental_limit'] ?? 0),
+        filter_var($body['fast_track'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 1 : 0
+    ) );
 
     if ($wpdb->last_error) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_ERROR,
