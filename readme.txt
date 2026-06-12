@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.3.0
+Stable tag: 2.3.1
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,13 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.3.1 =
+Bugfix release: fixes the plugin-activation database errors seen on environments where the `wp_lead_qualifications` table already exists (e.g. staging copies of production data).
+
+* **dbDelta schema.** The `lead_qualifications` schema now follows dbDelta conventions (`PRIMARY KEY  (id)` on its own line, column types as MySQL reports them back), stopping the "Multiple primary key defined" ALTER error on every activation.
+* **Duplicate lead_ids.** When the `lead_id_uniq` index is missing, activation now collapses duplicate `lead_id` rows (newest row kept, removed count logged) before dbDelta adds the unique key — fixes "Duplicate entry ... for key 'lead_id_uniq'" on data copied from test environments whose PACE sandbox returns the same lead_id for every submission.
+* **Lead upsert.** `/qualify-lead` now upserts (`INSERT ... ON DUPLICATE KEY UPDATE` keyed on `lead_id`), so repeat submissions returning the same lead_id update the existing qualification row instead of failing the unique key with a 500.
 
 = 2.3.0 =
 Stable release of the 2.3.0 line (promotes 2.3.0-beta.1 and 2.3.0-beta.2). Bundles the post-2.2.7 plugin audit fixes — REST endpoint and admin URL trigger hardening, PII handling, performance and reliability work — together with the tightened ID/Passport validation. Includes everything from 2.2.4–2.2.7 (passport ID support, autofill revalidation, lead endpoint logging, Status page log tail truncation, PII masking). Stable tag is now 2.3.0.
