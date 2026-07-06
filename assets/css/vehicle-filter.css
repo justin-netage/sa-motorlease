@@ -86,6 +86,12 @@
     padding: 12px 24px 8px;
     background: transparent;
 }
+/* Opaque panel variant (e.g. qualified carousel) — sits as a contained card. */
+.sa-vf-featured--panel {
+    padding: 22px 24px 18px;
+    border-radius: 14px;
+    box-shadow: 0 4px 20px rgba(0,0,0,.06);
+}
 /* Full-bleed variant: break out of any container to the full viewport width. */
 .sa-vf-featured--full {
     max-width: none;
