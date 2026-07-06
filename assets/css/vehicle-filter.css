@@ -5,8 +5,8 @@
  */
 
 .sa-vf {
-    --sa-vf-orange: #c9772a;
-    --sa-vf-orange-dark: #b3661d;
+    --sa-vf-orange: #f47b24;      /* brand orange */
+    --sa-vf-orange-dark: #d9661a; /* darker shade for hover states */
     --sa-vf-navy: #1c3a5e;
     --sa-vf-border: #d9dde2;
     --sa-vf-muted: #6b7280;
@@ -19,7 +19,14 @@
     box-sizing: border-box;
     font-family: inherit;
     color: var(--sa-vf-navy);
+    /* Centered container so the widget doesn't sit flush against the edges. */
+    max-width: 1360px;
+    margin: 0 auto;
+    padding: 24px 24px 48px;
 }
+/* On location archives the .sa-vf-archive wrapper already provides the
+   container, so don't double the gutters on the inner widget. */
+.sa-vf-archive .sa-vf { max-width: none; margin: 0; padding: 0; }
 .sa-vf *, .sa-vf *::before, .sa-vf *::after { box-sizing: border-box; }
 
 /* The [hidden] attribute must always win over the component's display rules
@@ -29,9 +36,9 @@
 
 /* ------------------------------------------- location archive wrapper */
 .sa-vf-archive {
-    max-width: 1280px;
+    max-width: 1360px;
     margin: 0 auto;
-    padding: 28px 20px 60px;
+    padding: 24px 24px 56px;
 }
 .sa-vf-archive__title {
     font-size: 26px;
@@ -234,16 +241,16 @@
     display: flex;
     flex-direction: column;
     background: #fff;
-    border-radius: 4px;
+    border-radius: 14px;
     overflow: hidden;
     text-decoration: none;
     color: inherit;
-    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    box-shadow: 0 5px 18px rgba(0,0,0,.09);
     transition: box-shadow .18s ease, transform .18s ease;
 }
 .sa-vf-card:hover {
-    box-shadow: 0 10px 26px rgba(0,0,0,.16);
-    transform: translateY(-2px);
+    box-shadow: 0 12px 30px rgba(0,0,0,.16);
+    transform: translateY(-3px);
 }
 .sa-vf-card__media {
     position: relative;
@@ -279,7 +286,7 @@
 }
 .sa-vf-card.is-sold .sa-vf-card__media img { opacity: .82; }
 
-.sa-vf-card__body { padding: 14px 16px 18px; }
+.sa-vf-card__body { padding: 15px 18px 20px; }
 .sa-vf-card__title {
     font-size: 15px;
     font-weight: 700;
@@ -296,7 +303,7 @@
     margin-bottom: 10px;
 }
 .sa-vf-card__price strong { font-size: 22px; font-weight: 800; }
-.sa-vf-card__pm { font-size: 14px; font-weight: 600; }
+.sa-vf-card__pm { font-size: 14px; font-weight: 600; color: #374151; }
 .sa-vf-card__rtb { font-size: 12px; color: var(--sa-vf-muted); text-transform: uppercase; letter-spacing: .04em; }
 .sa-vf-card__km {
     display: inline-block;
@@ -421,6 +428,10 @@
         display: none;
     }
     .sa-vf__sidebar.is-open { display: block; }
+}
+@media (max-width: 860px) {
+    .sa-vf { padding: 16px 16px 40px; }
+    .sa-vf-archive { padding: 16px 16px 40px; }
 }
 @media (max-width: 520px) {
     .sa-vf__grid { grid-template-columns: 1fr; }
