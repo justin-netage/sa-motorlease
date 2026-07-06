@@ -18,6 +18,11 @@
 }
 .sa-vf *, .sa-vf *::before, .sa-vf *::after { box-sizing: border-box; }
 
+/* The [hidden] attribute must always win over the component's display rules
+   (e.g. .sa-vf__loading{display:flex} / .sa-vf-btn{display:inline-block}),
+   otherwise the loader and hidden "load more" button stay permanently visible. */
+.sa-vf [hidden] { display: none !important; }
+
 /* ----------------------------------------------------------------- layout */
 .sa-vf__layout {
     display: grid;
@@ -47,12 +52,18 @@
 
 .sa-vf-select {
     width: 100%;
-    padding: 10px 12px;
+    height: auto;
+    min-height: 44px;
+    padding: 10px 34px 10px 12px; /* extra right padding clears the arrow */
     border: 1px solid var(--sa-vf-border);
     border-radius: var(--sa-vf-radius);
-    background: #fff;
+    background-color: #fff;
     font-size: 14px;
+    line-height: 1.4; /* stop the theme squeezing option text vertically */
     color: var(--sa-vf-navy);
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    overflow: hidden;
     appearance: none;
     -webkit-appearance: none;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7280' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
@@ -178,7 +189,9 @@
 
 .sa-vf__grid {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    /* minmax(0,1fr) stops image content from blowing the columns past the
+       container (which pushed the 3rd card off-screen). */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 22px;
 }
 
@@ -204,13 +217,21 @@
     background: #f2f3f5;
     overflow: hidden;
 }
-.sa-vf-card__media img {
+.sa-vf-card__img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
-    transition: opacity .2s ease;
 }
+/* Hover image is stacked on top and fades in — the main image below is never
+   removed, so it can't blank out on hover the way a src-swap does. */
+.sa-vf-card__img--hover {
+    opacity: 0;
+    transition: opacity .3s ease;
+}
+.sa-vf-card:hover .sa-vf-card__img--hover { opacity: 1; }
 .sa-vf-card__sold {
     position: absolute;
     top: 12px; right: 0;
@@ -301,7 +322,7 @@
 
 /* --------------------------------------------------------- responsive */
 @media (max-width: 1024px) {
-    .sa-vf__grid { grid-template-columns: repeat(2, 1fr); }
+    .sa-vf__grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 860px) {
     .sa-vf__layout { grid-template-columns: 1fr; }

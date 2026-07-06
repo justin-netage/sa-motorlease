@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.0.0' );
+    define( 'SA_VF_VERSION', '1.0.2' );
 }
 
 /**
@@ -403,12 +403,23 @@ function sa_vf_render_card( $id ) {
     $sold_terms = get_the_terms( $id, 'pa_sold' );
     $is_sold = $sold_terms && ! is_wp_error( $sold_terms ) && strcasecmp( reset( $sold_terms )->name, 'Yes' ) === 0;
 
+    $has_hover = $hover && $hover !== $img;
+
+    // `skip-lazy`/`no-lazy` opt these images out of theme/plugin lazy-loaders
+    // (WP Rocket, Jetpack, a3 Lazy Load, …) that would otherwise swap the src
+    // for a grey placeholder and leave it there.
     ob_start(); ?>
     <a class="sa-vf-card<?php echo $is_sold ? ' is-sold' : ''; ?>" href="<?php echo esc_url( $link ); ?>">
         <div class="sa-vf-card__media">
-            <img src="<?php echo esc_url( $img ); ?>"
-                 data-hover="<?php echo esc_url( $hover ); ?>"
-                 alt="<?php echo esc_attr( $title ); ?>" loading="lazy">
+            <img class="sa-vf-card__img skip-lazy no-lazy"
+                 src="<?php echo esc_url( $img ); ?>"
+                 alt="<?php echo esc_attr( $title ); ?>"
+                 loading="eager" decoding="async" data-skip-lazy="1">
+            <?php if ( $has_hover ) : ?>
+                <img class="sa-vf-card__img sa-vf-card__img--hover skip-lazy no-lazy"
+                     src="<?php echo esc_url( $hover ); ?>"
+                     alt="" aria-hidden="true" loading="lazy" decoding="async" data-skip-lazy="1">
+            <?php endif; ?>
             <?php if ( $is_sold ) : ?>
                 <span class="sa-vf-card__sold">SOLD</span>
             <?php endif; ?>

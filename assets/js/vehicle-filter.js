@@ -102,9 +102,17 @@
             } else {
                 grid.innerHTML = d.html;
             }
-            if (count) count.textContent = d.showing;
+            if (count) {
+                // On "load more" the grid accumulates pages, so show the
+                // cumulative range rather than just the appended page's slice.
+                if (append) {
+                    var shown = grid.querySelectorAll('.sa-vf-card').length;
+                    count.textContent = 'Showing 1–' + shown + ' of ' + d.total + ' results';
+                } else {
+                    count.textContent = d.showing;
+                }
+            }
             renderPager(d.page, d.pages);
-            hoverInit();
         })
         .catch(function () {
             if (!append) grid.innerHTML = '<div class="sa-vf-empty">Something went wrong loading vehicles. Please try again.</div>';
@@ -226,21 +234,6 @@
         paint();
     }
 
-    /* -------------------------------------------------------- image hover */
-
-    function hoverInit() {
-        grid.querySelectorAll('.sa-vf-card img[data-hover]').forEach(function (img) {
-            if (img.dataset.bound) return;
-            img.dataset.bound = '1';
-            var main = img.getAttribute('src');
-            var hov  = img.getAttribute('data-hover');
-            if (!hov || hov === main) return;
-            var card = img.closest('.sa-vf-card');
-            card.addEventListener('mouseenter', function () { img.src = hov; });
-            card.addEventListener('mouseleave', function () { img.src = main; });
-        });
-    }
-
     /* --------------------------------------------------------------- events */
 
     form.querySelectorAll('.sa-vf-select').forEach(function (s) {
@@ -295,5 +288,4 @@
     /* ----------------------------------------------------------------- boot */
     updateModels();
     initRange();
-    hoverInit();
 })();
