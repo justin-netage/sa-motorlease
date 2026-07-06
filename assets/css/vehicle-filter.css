@@ -4,7 +4,13 @@
  * or the old WBW filter while both are present.
  */
 
-.sa-vf {
+/* Brand tokens live on every widget wrapper so the shared .sa-vf-card looks
+   identical wherever it renders — the filter grid, the featured slider and the
+   location archive (the featured strip sits outside .sa-vf, so it needs its
+   own copy of the variables). */
+.sa-vf,
+.sa-vf-featured,
+.sa-vf-archive {
     --sa-vf-orange: #f47b24;      /* brand orange */
     --sa-vf-orange-dark: #d9661a; /* darker shade for hover states */
     --sa-vf-navy: #003b65;
@@ -12,6 +18,8 @@
     --sa-vf-muted: #6b7280;
     --sa-vf-bg: #ffffff;
     --sa-vf-radius: 6px;
+}
+.sa-vf {
     /* Height of the site's sticky header — sticky sidebar + scroll offsets
        clear this so nothing hides under it. Adjust if the header height changes. */
     --sa-vf-header: 80px;
@@ -27,7 +35,9 @@
 /* On location archives the .sa-vf-archive wrapper already provides the
    container, so don't double the gutters on the inner widget. */
 .sa-vf-archive .sa-vf { max-width: none; margin: 0; padding: 0; }
-.sa-vf *, .sa-vf *::before, .sa-vf *::after { box-sizing: border-box; }
+.sa-vf *, .sa-vf *::before, .sa-vf *::after,
+.sa-vf-featured *, .sa-vf-featured *::before, .sa-vf-featured *::after,
+.sa-vf-archive *, .sa-vf-archive *::before, .sa-vf-archive *::after { box-sizing: border-box; }
 
 /* When logged in, the WordPress admin bar (32px, 46px on small screens) sits
    above the fixed header, pushing it down — so the sticky offset needs to clear
@@ -66,40 +76,120 @@
     margin: 0 auto;
     padding: 12px 24px 8px;
 }
+/* Centred heading flanked by rules. */
 .sa-vf-featured__title {
-    text-align: center;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 22px;
     color: #003b65;
     font-size: 20px;
     font-weight: 800;
     letter-spacing: .05em;
     text-transform: uppercase;
-    margin: 0 0 18px;
+    margin: 0 0 20px;
 }
+.sa-vf-featured__title::before,
+.sa-vf-featured__title::after {
+    content: "";
+    height: 1px;
+    background: #d9dde2;
+    flex: 1 1 auto;
+    max-width: 300px;
+}
+
+.sa-vf-featured__viewport { position: relative; padding: 0 44px; }
 .sa-vf-featured__track {
     display: grid;
     grid-auto-flow: column;
     grid-auto-columns: calc((100% - 66px) / 4); /* 4 across, rest scroll */
     gap: 22px;
     overflow-x: auto;
-    scroll-snap-type: x mandatory;
+    scroll-snap-type: x proximity;
     padding-bottom: 10px;
-    scrollbar-width: thin;
+    scrollbar-width: none; /* the arrows/drag are the affordance */
+    cursor: grab;
+}
+.sa-vf-featured__track::-webkit-scrollbar { display: none; }
+.sa-vf-featured__track.is-dragging {
+    cursor: grabbing;
+    scroll-snap-type: none;
+    scroll-behavior: auto;
+    user-select: none;
 }
 .sa-vf-featured__item {
     scroll-snap-align: start;
     display: flex; /* stretch card to full column height */
 }
 .sa-vf-featured__item .sa-vf-card { width: 100%; }
+.sa-vf-featured__item .sa-vf-card__img { -webkit-user-drag: none; user-select: none; }
+
+/* Prev/next arrows */
+.sa-vf-featured__nav {
+    position: absolute;
+    top: 40%;
+    transform: translateY(-50%);
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid var(--sa-vf-border, #d9dde2);
+    background: #fff;
+    color: #003b65;
+    font-size: 24px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 2px 10px rgba(0,0,0,.14);
+    z-index: 3;
+    transition: background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease;
+}
+.sa-vf-featured__nav--prev { left: 0; }
+.sa-vf-featured__nav--next { right: 0; }
+.sa-vf-featured__nav:hover { background: #f47b24; color: #fff; border-color: #f47b24; }
+.sa-vf-featured__nav:disabled { opacity: 0; pointer-events: none; }
+
 @media (max-width: 1024px) {
     .sa-vf-featured__track { grid-auto-columns: calc((100% - 44px) / 3); }
 }
 @media (max-width: 768px) {
     .sa-vf-featured__track { grid-auto-columns: calc((100% - 22px) / 2); }
+    .sa-vf-featured__title::before, .sa-vf-featured__title::after { max-width: 90px; }
 }
 @media (max-width: 520px) {
-    .sa-vf-featured { padding: 12px 16px 8px; }
-    .sa-vf-featured__track { grid-auto-columns: 82%; }
+    .sa-vf-featured { padding: 12px 8px 8px; }
+    .sa-vf-featured__viewport { padding: 0 30px; }
+    .sa-vf-featured__track { grid-auto-columns: 84%; }
+    .sa-vf-featured__nav { width: 34px; height: 34px; font-size: 20px; }
 }
+
+/* ------------------------------------------- title row + breadcrumb + disclaimer */
+.sa-vf-archive__head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin-bottom: 6px;
+}
+.sa-vf-crumbs {
+    font-size: 13px;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+}
+.sa-vf-crumbs a { color: #6b7280; text-decoration: none; }
+.sa-vf-crumbs a:hover { color: #f47b24; }
+.sa-vf-crumbs__sep { margin: 0 6px; color: #c2c7cf; }
+.sa-vf-disclaimer {
+    color: #6b7280;
+    font-size: 14px;
+    line-height: 1.6;
+    margin: 6px 0 24px;
+}
+.sa-vf-disclaimer p { margin: 0 0 8px; }
+.sa-vf-disclaimer p:last-child { margin-bottom: 0; }
 
 /* ----------------------------------------------------------------- layout */
 .sa-vf__layout {

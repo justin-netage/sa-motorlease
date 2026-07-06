@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.1.0' );
+    define( 'SA_VF_VERSION', '1.2.0' );
 }
 
 /**
@@ -631,12 +631,16 @@ function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured
     ob_start(); ?>
     <div class="sa-vf-featured">
         <?php if ( $title !== '' ) : ?>
-            <h2 class="sa-vf-featured__title"><?php echo esc_html( $title ); ?></h2>
+            <h2 class="sa-vf-featured__title"><span><?php echo esc_html( $title ); ?></span></h2>
         <?php endif; ?>
-        <div class="sa-vf-featured__track">
-            <?php foreach ( $ids as $id ) : ?>
-                <div class="sa-vf-featured__item"><?php echo sa_vf_render_card( $id ); // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
-            <?php endforeach; ?>
+        <div class="sa-vf-featured__viewport">
+            <button type="button" class="sa-vf-featured__nav sa-vf-featured__nav--prev" aria-label="Previous vehicles">&#8249;</button>
+            <div class="sa-vf-featured__track">
+                <?php foreach ( $ids as $id ) : ?>
+                    <div class="sa-vf-featured__item"><?php echo sa_vf_render_card( $id ); // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
+                <?php endforeach; ?>
+            </div>
+            <button type="button" class="sa-vf-featured__nav sa-vf-featured__nav--next" aria-label="More vehicles">&#8250;</button>
         </div>
     </div>
     <?php
@@ -653,6 +657,7 @@ function sa_vf_featured_shortcode( $atts ) {
     ], $atts, 'sa_featured_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
+    wp_enqueue_script( 'sa-vehicle-filter' ); // drives the draggable slider + arrows
 
     $cat_id = 0;
     if ( $atts['category'] !== '' ) {
@@ -667,3 +672,37 @@ function sa_vf_featured_shortcode( $atts ) {
 
     return sa_vf_render_featured( $cat_id, (int) $atts['limit'], $atts['title'] );
 }
+
+/* ===========================================================================
+ * Disclaimer + breadcrumb shortcodes
+ * ======================================================================== */
+
+/** Configured listings disclaimer text (falls back to empty). */
+function sa_vf_get_disclaimer() {
+    return function_exists( 'sa_motorlease_get_setting' )
+        ? (string) sa_motorlease_get_setting( 'listings_disclaimer', '' )
+        : '';
+}
+
+add_shortcode( 'sa_listings_disclaimer', function () {
+    $text = trim( sa_vf_get_disclaimer() );
+    if ( $text === '' ) return '';
+    wp_enqueue_style( 'sa-vehicle-filter' );
+    return '<div class="sa-vf-disclaimer">' . wp_kses_post( wpautop( $text ) ) . '</div>';
+} );
+
+add_shortcode( 'sa_breadcrumbs', function () {
+    if ( ! function_exists( 'woocommerce_breadcrumb' ) ) return '';
+    wp_enqueue_style( 'sa-vehicle-filter' );
+    ob_start();
+    echo '<nav class="sa-vf-crumbs">';
+    woocommerce_breadcrumb( [
+        'wrap_before' => '',
+        'wrap_after'  => '',
+        'before'      => '',
+        'after'       => '',
+        'delimiter'   => ' <span class="sa-vf-crumbs__sep">/</span> ',
+    ] );
+    echo '</nav>';
+    return ob_get_clean();
+} );

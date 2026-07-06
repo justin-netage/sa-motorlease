@@ -332,3 +332,86 @@
         parseInt(pager.getAttribute('data-pages'), 10) || 1
     );
 })();
+
+
+/* ===========================================================================
+ * Featured listings slider — draggable + prev/next arrows.
+ * Independent of the filter above so it also works on featured-only pages.
+ * ======================================================================== */
+(function () {
+    'use strict';
+
+    function initFeatured(el) {
+        var track = el.querySelector('.sa-vf-featured__track');
+        if (!track || track.dataset.saInit) return;
+        track.dataset.saInit = '1';
+
+        var prev = el.querySelector('.sa-vf-featured__nav--prev');
+        var next = el.querySelector('.sa-vf-featured__nav--next');
+
+        function page() {
+            // Scroll by roughly one viewport-width of cards.
+            return Math.max(240, Math.round(track.clientWidth * 0.9));
+        }
+
+        function update() {
+            var max = track.scrollWidth - track.clientWidth - 2;
+            var hasOverflow = max > 0;
+            if (prev) prev.disabled = !hasOverflow || track.scrollLeft <= 0;
+            if (next) next.disabled = !hasOverflow || track.scrollLeft >= max;
+        }
+
+        if (prev) prev.addEventListener('click', function () {
+            track.scrollBy({ left: -page(), behavior: 'smooth' });
+        });
+        if (next) next.addEventListener('click', function () {
+            track.scrollBy({ left: page(), behavior: 'smooth' });
+        });
+        track.addEventListener('scroll', update, { passive: true });
+        window.addEventListener('resize', update);
+
+        // Pointer drag-to-scroll.
+        var down = false, startX = 0, startScroll = 0, moved = false;
+        track.addEventListener('pointerdown', function (e) {
+            if (e.button !== undefined && e.button !== 0) return;
+            down = true; moved = false;
+            startX = e.clientX; startScroll = track.scrollLeft;
+        });
+        track.addEventListener('pointermove', function (e) {
+            if (!down) return;
+            var dx = e.clientX - startX;
+            if (Math.abs(dx) > 4) {
+                if (!moved) track.classList.add('is-dragging');
+                moved = true;
+            }
+            track.scrollLeft = startScroll - dx;
+        });
+        function end() {
+            if (!down) return;
+            down = false;
+            // Drop the dragging class next frame so the click-suppressor can read `moved`.
+            setTimeout(function () { track.classList.remove('is-dragging'); }, 0);
+        }
+        track.addEventListener('pointerup', end);
+        track.addEventListener('pointercancel', end);
+        track.addEventListener('pointerleave', end);
+
+        // Suppress the card link click that would fire at the end of a drag.
+        track.addEventListener('click', function (e) {
+            if (moved) { e.preventDefault(); e.stopPropagation(); moved = false; }
+        }, true);
+
+        update();
+    }
+
+    function boot() {
+        var list = document.querySelectorAll('.sa-vf-featured');
+        for (var i = 0; i < list.length; i++) initFeatured(list[i]);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+})();
