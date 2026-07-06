@@ -463,9 +463,96 @@
         update();
     }
 
+    // Exposed so the qualified carousel can init its slider after it fills.
+    window.saVfInitFeatured = initFeatured;
+
     function boot() {
-        var list = document.querySelectorAll('.sa-vf-featured');
+        // Skip carousels that populate themselves later (e.g. qualified).
+        var list = document.querySelectorAll('.sa-vf-featured:not([data-qualified])');
         for (var i = 0; i < list.length; i++) initFeatured(list[i]);
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', boot);
+    } else {
+        boot();
+    }
+})();
+
+
+/* ===========================================================================
+ * Qualified-vehicles carousel — reads the lead's rental limit and fills the
+ * slider via AJAX, then boots the same drag/arrow slider.
+ * ======================================================================== */
+(function () {
+    'use strict';
+
+    function readLimit() {
+        // URL ?rental_limit= wins (e.g. the "see all" link), else stored lead.
+        try {
+            var qs = new URLSearchParams(window.location.search);
+            var p = qs.get('rental_limit');
+            if (p) {
+                var n = parseFloat(String(p).replace(/[^\d.]/g, ''));
+                if (!isNaN(n) && n > 0) return n;
+            }
+        } catch (e) {}
+
+        var stored = null;
+        try { stored = sessionStorage.getItem('lead_qualification') || localStorage.getItem('lead_qualification'); } catch (e) {}
+        if (!stored) return null;
+        try {
+            var lead = JSON.parse(stored);
+            var raw = lead && lead.response ? lead.response.rental_limit : null;
+            if (raw == null) return null;
+            var v = parseFloat(String(raw).replace(/[^\d.]/g, ''));
+            return (!isNaN(v) && v > 0) ? v : null;
+        } catch (e) { return null; }
+    }
+
+    function initQualified(el) {
+        if (el.dataset.saQInit) return;
+        el.dataset.saQInit = '1';
+
+        var track = el.querySelector('.sa-vf-featured__track');
+        var msgEl = el.querySelector('.sa-vf-featured__msg');
+        var cfg   = window.SA_VF_Q || {};
+
+        function showMsg(text) {
+            if (track) track.innerHTML = '';
+            if (msgEl) { msgEl.textContent = text; msgEl.hidden = false; }
+        }
+
+        var limit = readLimit();
+        if (limit == null) { showMsg('Complete the qualification to see vehicles within your monthly amount.'); return; }
+        if (!cfg.ajax_url || !track) { showMsg(''); return; }
+
+        var body = new URLSearchParams();
+        body.set('action', 'sa_vf_qualified');
+        body.set('rental_limit', limit);
+        if (el.getAttribute('data-limit')) body.set('limit', el.getAttribute('data-limit'));
+
+        fetch(cfg.ajax_url, {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body.toString()
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+            if (!res || !res.success || !res.data || !res.data.html) {
+                showMsg('No vehicles are currently available within your monthly amount.');
+                return;
+            }
+            track.innerHTML = res.data.html;
+            if (msgEl) msgEl.hidden = true;
+            if (typeof window.saVfInitFeatured === 'function') window.saVfInitFeatured(el);
+        })
+        .catch(function () { showMsg('Could not load vehicles right now. Please try again.'); });
+    }
+
+    function boot() {
+        document.querySelectorAll('.sa-vf-featured[data-qualified]').forEach(initQualified);
     }
 
     if (document.readyState === 'loading') {

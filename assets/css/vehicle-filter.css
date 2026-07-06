@@ -85,6 +85,24 @@
     margin: 0 auto;
     padding: 12px 24px 8px;
 }
+/* Full-bleed variant: break out of any container to the full viewport width. */
+.sa-vf-featured--full {
+    max-width: none;
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+    padding-left: 0;
+    padding-right: 0;
+    overflow: hidden;
+}
+.sa-vf-featured--full .sa-vf-featured__track { grid-auto-columns: 300px; }
+.sa-vf-featured__msg {
+    text-align: center;
+    color: #6b7280;
+    font-size: 15px;
+    padding: 26px 20px;
+    margin: 0;
+}
 /* Centred heading flanked by rules. */
 .sa-vf-featured__title {
     display: flex;
@@ -194,7 +212,8 @@
 @media (max-width: 520px) {
     .sa-vf-featured { padding: 12px 8px 8px; }
     .sa-vf-featured__viewport { padding: 0 34px; }
-    .sa-vf-featured__track { grid-auto-columns: 84%; }
+    .sa-vf-featured__track,
+    .sa-vf-featured--full .sa-vf-featured__track { grid-auto-columns: 84%; }
     .sa-vf-featured .sa-vf-featured__nav { width: 30px !important; height: 30px !important; }
     .sa-vf-featured .sa-vf-featured__nav::before { width: 7px; height: 7px; }
 }
