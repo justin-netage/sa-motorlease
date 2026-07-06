@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.0.4' );
+    define( 'SA_VF_VERSION', '1.0.7' );
 }
 
 /**
@@ -210,8 +210,20 @@ function sa_vf_parse_args( array $src ) {
         'km'       => $str( 'km' ),
         'price_min'=> ( $str( 'price_min' ) !== '' ) ? (int) $str( 'price_min' ) : null,
         'price_max'=> ( $str( 'price_max' ) !== '' ) ? (int) $str( 'price_max' ) : null,
+        'category' => 0, // product_cat term the whole view is locked to (location archives)
         'facets'   => [],
     ];
+
+    // Category scope may arrive as a term id or slug; resolve to an id.
+    $cat = $str( 'category' );
+    if ( $cat !== '' ) {
+        if ( ctype_digit( $cat ) && term_exists( (int) $cat, 'product_cat' ) ) {
+            $args['category'] = (int) $cat;
+        } else {
+            $term = get_term_by( 'slug', sanitize_title( $cat ), 'product_cat' );
+            if ( $term && ! is_wp_error( $term ) ) $args['category'] = (int) $term->term_id;
+        }
+    }
 
     $sort = $str( 'sort' );
     if ( $sort !== '' && array_key_exists( $sort, sa_vf_sort_options() ) ) {
@@ -259,6 +271,17 @@ function sa_vf_matching_ids( array $args ) {
             'field'    => 'name',
             'terms'    => 'Yes',
             'operator' => 'NOT IN',
+        ];
+    }
+
+    // Location scope (province/area archives). include_children=true so a
+    // province term also covers all of its area sub-terms.
+    if ( ! empty( $args['category'] ) ) {
+        $tax_query[] = [
+            'taxonomy'         => 'product_cat',
+            'field'            => 'term_id',
+            'terms'            => (int) $args['category'],
+            'include_children' => true,
         ];
     }
 
@@ -475,14 +498,41 @@ function sa_vf_register_assets() {
         SA_VF_VERSION,
         true
     );
+
+    // On location archives we render the filter ourselves (below), so make sure
+    // the assets land in <head> rather than relying on the shortcode enqueue.
+    if ( function_exists( 'is_product_category' ) && is_product_category() ) {
+        wp_enqueue_style( 'sa-vehicle-filter' );
+        wp_enqueue_script( 'sa-vehicle-filter' );
+    }
 }
 add_action( 'wp_enqueue_scripts', 'sa_vf_register_assets' );
+
+/* ===========================================================================
+ * Location category archives → render the filter, scoped to that province/area
+ * ======================================================================== */
+
+/**
+ * Take over WooCommerce product_cat archives (the importer's province/area
+ * location terms, e.g. /listings/gauteng/sandton/) and render the custom
+ * filter locked to that location instead of the theme's default product loop.
+ * Keeps the theme header/footer — and the SEO-friendly term URL + <title>.
+ */
+add_filter( 'template_include', 'sa_vf_location_archive_template', 99 );
+function sa_vf_location_archive_template( $template ) {
+    if ( is_admin() || ! function_exists( 'is_product_category' ) || ! is_product_category() ) {
+        return $template;
+    }
+    $custom = SA_MOTORLEASE_DIR . 'includes/location-archive-template.php';
+    return file_exists( $custom ) ? $custom : $template;
+}
 
 add_shortcode( 'sa_vehicle_filter', 'sa_vf_shortcode' );
 
 function sa_vf_shortcode( $atts ) {
     $atts = shortcode_atts( [
         'per_page' => SA_VF_PER_PAGE,
+        'category' => '', // product_cat id or slug to lock the whole view to (location pages)
     ], $atts, 'sa_vehicle_filter' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
@@ -491,8 +541,15 @@ function sa_vf_shortcode( $atts ) {
     // Seed the initial (server-rendered) state from the URL so the page is
     // shareable and works before JS boots.
     $initial = sa_vf_parse_args( $_GET );
-    $result  = sa_vf_run_query( $initial );
 
+    // A category set on the shortcode always wins over the URL — it's the fixed
+    // location scope for that page/archive and must not be user-removable.
+    if ( $atts['category'] !== '' ) {
+        $scope = sa_vf_parse_args( [ 'category' => (string) $atts['category'] ] );
+        $initial['category'] = $scope['category'];
+    }
+
+    $result = sa_vf_run_query( $initial );
     $bounds = sa_vf_price_bounds();
 
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF', [
@@ -502,6 +559,7 @@ function sa_vf_shortcode( $atts ) {
         'models'     => sa_vf_make_model_map(),
         'per_page'   => (int) SA_VF_PER_PAGE,
         'sort'       => sa_vf_sort_options(),
+        'category'   => (int) $initial['category'], // keeps AJAX requests locked to the location
     ] );
 
     ob_start();

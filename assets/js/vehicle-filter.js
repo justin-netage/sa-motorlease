@@ -85,6 +85,8 @@
         data.page = state.page;
         data.action = 'sa_vf_query';
         data.nonce = CFG.nonce;
+        // Location scope is fixed for the page — send it, but keep it out of the URL.
+        if (CFG.category) data.category = CFG.category;
 
         var body = new URLSearchParams();
         Object.keys(data).forEach(function (k) { body.set(k, data[k]); });
@@ -176,8 +178,15 @@
     function scrollToResults() {
         var results = root.querySelector('.sa-vf__results');
         if (!results) return;
-        var top = results.getBoundingClientRect().top + window.pageYOffset - 20;
-        window.scrollTo({ top: top, behavior: 'smooth' });
+        // Clear the site's sticky header (read the CSS var, fall back to 96px).
+        var offset = 96;
+        var raw = getComputedStyle(root).getPropertyValue('--sa-vf-sticky-top');
+        if (raw) {
+            var n = parseInt(raw, 10);
+            if (!isNaN(n)) offset = n + 16;
+        }
+        var top = results.getBoundingClientRect().top + window.pageYOffset - offset;
+        window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     }
 
     /* Re-run from page 1 (any filter change). No scroll — user is at the top. */
