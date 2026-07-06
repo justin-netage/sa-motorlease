@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.4.1' );
+    define( 'SA_VF_VERSION', '1.4.2' );
 }
 
 /**
@@ -813,8 +813,13 @@ add_shortcode( 'sa_breadcrumbs', function () {
     // Home
     $items[] = $link( 'Home', home_url( '/' ) );
 
-    // Listings root (configurable page)
+    // Listings root: the configured page, else fall back to the page at
+    // slug "listings" so the crumb still appears before it's set in settings.
     $lp = function_exists( 'sa_motorlease_get_setting' ) ? (int) sa_motorlease_get_setting( 'listings_page_id', 0 ) : 0;
+    if ( ! $lp ) {
+        $auto = get_page_by_path( 'listings' );
+        if ( $auto ) $lp = (int) $auto->ID;
+    }
     $is_cat = function_exists( 'is_product_category' ) && is_product_category();
 
     if ( $lp && get_post_status( $lp ) ) {
