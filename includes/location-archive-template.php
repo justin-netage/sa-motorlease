@@ -26,18 +26,24 @@ get_header();
             }
         }
 
-        // Our own featured strip, scoped to this location.
+        // Featured strip first, scoped to this location.
         echo sa_vf_render_featured( $term_id, 8, 'Featured Listings' ); // phpcs:ignore WordPress.Security.EscapeOutput
 
+        // Title + breadcrumb row.
+        echo '<div class="sa-vf-archive__head">';
         echo '<h1 class="sa-vf-archive__title">Vehicles in ' . esc_html( $title . $suffix ) . '</h1>';
+        echo do_shortcode( '[sa_breadcrumbs]' );
+        echo '</div>';
 
-        // Keep the category's intro text/disclaimer, but strip any embedded
-        // shortcodes (old carousel / WBW "Filter Vehicles" button) so they
-        // don't reappear inside our takeover.
+        // Optional per-location intro (term description), with embedded
+        // shortcodes stripped so a legacy carousel / WBW button can't reappear.
         $desc = strip_shortcodes( term_description( $term_id, 'product_cat' ) );
         if ( trim( wp_strip_all_tags( $desc ) ) !== '' ) {
             echo '<div class="sa-vf-archive__desc">' . wp_kses_post( $desc ) . '</div>';
         }
+
+        // Global disclaimer (from settings).
+        echo do_shortcode( '[sa_listings_disclaimer]' );
 
         echo do_shortcode( '[sa_vehicle_filter category="' . $term_id . '"]' );
     } else {

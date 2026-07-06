@@ -5310,6 +5310,7 @@ function sa_motorlease_default_settings() {
         'gf_forwarder_form_id' => 5,
         'log_level'            => SA_MOTORLEASE_LOG_WARN,
         'log_retention_days'   => 21,
+        'listings_disclaimer'  => 'Please note all vehicle listings are subject to availability and may change without prior notice. Images are for illustration purposes only and may differ from the actual vehicle offered. Prices, specifications, and features are provided as a guide and may vary depending on stock, condition, and applicable fees. Placement on this page does not guarantee that a vehicle is currently available',
     ];
 }
 
@@ -5584,6 +5585,14 @@ add_action( 'admin_init', function () {
         },
         SA_MOTORLEASE_SETTINGS_SLUG
     );
+    add_settings_section(
+        'sa_motorlease_section_listings',
+        'Vehicle Listings',
+        function () {
+            echo '<p>Front-end vehicle filter / listings options.</p>';
+        },
+        SA_MOTORLEASE_SETTINGS_SLUG
+    );
 
     $f = function ( $id, $title, $cb, $section ) {
         add_settings_field( $id, $title, $cb, SA_MOTORLEASE_SETTINGS_SLUG, $section );
@@ -5597,6 +5606,8 @@ add_action( 'admin_init', function () {
 
     $f( 'log_level',          'Log level',           'sa_motorlease_field_log_level',          'sa_motorlease_section_logging' );
     $f( 'log_retention_days', 'Log retention days',  'sa_motorlease_field_log_retention_days', 'sa_motorlease_section_logging' );
+
+    $f( 'listings_disclaimer', 'Listings disclaimer', 'sa_motorlease_field_listings_disclaimer', 'sa_motorlease_section_listings' );
 } );
 
 function sa_motorlease_sanitize_settings( $input ) {
@@ -5628,6 +5639,10 @@ function sa_motorlease_sanitize_settings( $input ) {
 
     if ( isset( $input['log_retention_days'] ) ) {
         $out['log_retention_days'] = max( 1, min( 365, (int) $input['log_retention_days'] ) );
+    }
+
+    if ( isset( $input['listings_disclaimer'] ) ) {
+        $out['listings_disclaimer'] = wp_kses_post( trim( (string) $input['listings_disclaimer'] ) );
     }
 
     return $out;
@@ -5690,6 +5705,15 @@ function sa_motorlease_field_log_retention_days() {
         esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
     );
     echo '<p class="description">The daily rotate job trims log lines older than this. The constant <code>SA_MOTORLEASE_LOG_RETENTION_DAYS</code>, if defined, takes precedence.</p>';
+}
+
+function sa_motorlease_field_listings_disclaimer() {
+    $val = (string) sa_motorlease_get_setting( 'listings_disclaimer' );
+    printf(
+        '<textarea class="large-text" rows="5" name="%s[listings_disclaimer]">%s</textarea>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), esc_textarea( $val )
+    );
+    echo '<p class="description">Shown beneath the title on the vehicle listings page and the location category pages. Place it anywhere with the <code>[sa_listings_disclaimer]</code> shortcode. Basic HTML is allowed; leave blank to hide it.</p>';
 }
 
 // --- Settings page renderer -------------------------------------------------
