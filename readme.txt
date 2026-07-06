@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.3.1
+Stable tag: 2.4.0
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,14 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.4.0 =
+New feature: a self-contained custom vehicle filter that replaces the third-party WBW / WooBeWoo Product Filter on the vehicles listing, with richer filtering than the plugin it supersedes. The existing WBW reindex/cleanup integration is left in place so the two can run side by side while the site is switched over.
+
+* **`[sa_vehicle_filter]` shortcode.** Renders a filter sidebar plus an AJAX-driven results grid. Drop it on any page (e.g. a new Vehicles page) to run alongside the WBW filter, then switch over once you're happy. No theme template changes required.
+* **Facets.** New or Used, Make, Model, Region, Transmission, Body Type, Fuel and Year Model dropdowns, all populated from the `pa_*` attribute taxonomies the PaceApp importer already writes (empty facets are hidden automatically). Mileage is offered as sensible ranges (resolved to the underlying `pa_kilometers` terms), and the monthly rent-to-buy price is a dual-handle range slider bounded to the live catalogue min/max.
+* **Better filter functions than WBW.** Dependent Make → Model narrowing, instant (no page reload) AJAX filtering, a live result count, seven sort modes (price, year, mileage, recently added), a "hide sold vehicles" toggle with sold cars always sorted last, "load more" pagination and shareable/bookmarkable URL state (filters serialise to the query string).
+* **Performance & safety.** Facet options, make/model map and price bounds are cached for 15 minutes and flushed on the importer's post-import reindex signal. The AJAX endpoint is public and read-only (surfaces only already-public published products, mirroring `/qualified-vehicles`) so it survives full-page caching. All request input is sanitised; output is escaped.
 
 = 2.3.1 =
 Bugfix release: fixes the plugin-activation database errors seen on environments where the `wp_lead_qualifications` table already exists (e.g. staging copies of production data).

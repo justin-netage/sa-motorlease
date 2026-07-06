@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.3.1
+ * Version: 2.4.0
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.3.1' );
+define( 'SA_MOTORLEASE_VERSION', '2.4.0' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -22,6 +22,10 @@ $sa_motorlease_update_checker = YahnisElsts\PluginUpdateChecker\v5\PucFactory::b
 );
 $sa_motorlease_update_checker->setBranch( 'main' );
 $sa_motorlease_update_checker->getVcsApi()->enableReleaseAssets();
+
+// Custom vehicle filter — self-contained [sa_vehicle_filter] shortcode that
+// replaces the WBW / WooBeWoo Product Filter on the vehicles archive.
+require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
 
 // === CONFIG =================================================================
 
