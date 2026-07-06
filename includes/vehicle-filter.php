@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.2.0' );
+    define( 'SA_VF_VERSION', '1.2.1' );
 }
 
 /**
@@ -92,6 +92,52 @@ function sa_vf_year_terms() {
         return intval( $b['name'] ) <=> intval( $a['name'] );
     } );
     return $terms;
+}
+
+/**
+ * Region navigator for a location category page. Instead of filtering, the
+ * Region dropdown lets the visitor jump between the location archives of the
+ * current province (so they can't wander outside e.g. Gauteng). Returns
+ * [ 'current' => term_id, 'options' => [ [id,name,url], ... ] ] or null when
+ * the category has no usable location tree.
+ */
+function sa_vf_region_nav( $category_id ) {
+    $category_id = (int) $category_id;
+    if ( ! $category_id || ! term_exists( $category_id, 'product_cat' ) ) return null;
+
+    // Top-most ancestor is the province; if none, the term is itself a province.
+    $ancestors   = get_ancestors( $category_id, 'product_cat', 'taxonomy' );
+    $province_id = $ancestors ? (int) end( $ancestors ) : $category_id;
+    $province    = get_term( $province_id, 'product_cat' );
+    if ( ! $province || is_wp_error( $province ) ) return null;
+
+    $options = [];
+
+    // "All <Province>" first — links back to the province archive.
+    $prov_link = get_term_link( $province );
+    if ( ! is_wp_error( $prov_link ) ) {
+        $options[] = [ 'id' => $province_id, 'name' => 'All ' . $province->name, 'url' => $prov_link ];
+    }
+
+    // Each area under the province.
+    $areas = get_terms( [
+        'taxonomy'   => 'product_cat',
+        'parent'     => $province_id,
+        'hide_empty' => true,
+        'orderby'    => 'name',
+        'order'      => 'ASC',
+    ] );
+    if ( ! is_wp_error( $areas ) ) {
+        foreach ( $areas as $a ) {
+            $link = get_term_link( $a );
+            if ( is_wp_error( $link ) ) continue;
+            $options[] = [ 'id' => (int) $a->term_id, 'name' => $a->name, 'url' => $link ];
+        }
+    }
+
+    if ( count( $options ) < 2 ) return null; // nothing meaningful to navigate
+
+    return [ 'current' => $category_id, 'options' => $options ];
 }
 
 /** min/max monthly price across published vehicles (cached 15 min). */
@@ -551,6 +597,10 @@ function sa_vf_shortcode( $atts ) {
 
     $result = sa_vf_run_query( $initial );
     $bounds = sa_vf_price_bounds();
+
+    // On a category page the Region dropdown navigates between location
+    // archives (scoped to the current province) instead of filtering.
+    $region_nav = $initial['category'] ? sa_vf_region_nav( $initial['category'] ) : null;
 
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF', [
         'ajax_url'   => admin_url( 'admin-ajax.php' ),
