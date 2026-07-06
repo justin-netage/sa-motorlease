@@ -50,7 +50,9 @@
 }
 .sa-vf-field { margin-bottom: 12px; }
 
-.sa-vf-select {
+/* Extra specificity + !important so the theme's own <select> styling (native
+   arrow, background-size that was blowing our icon up huge) can't win. */
+.sa-vf .sa-vf-select {
     width: 100%;
     height: auto;
     min-height: 44px;
@@ -64,14 +66,17 @@
     white-space: nowrap;
     text-overflow: ellipsis;
     overflow: hidden;
-    appearance: none;
-    -webkit-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%236b7280' d='M6 8 0 0h12z'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 12px center;
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    -moz-appearance: none !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath fill='none' stroke='%231c3a5e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 7 7.5 13 1.5'/%3E%3C/svg%3E") !important;
+    background-repeat: no-repeat !important;
+    background-position: right 13px center !important;
+    background-size: 12px 8px !important; /* pin the arrow size, ignore theme */
     cursor: pointer;
 }
-.sa-vf-select:focus { outline: none; border-color: var(--sa-vf-orange); }
+.sa-vf .sa-vf-select::-ms-expand { display: none; } /* legacy Edge/IE arrow */
+.sa-vf .sa-vf-select:focus { outline: none; border-color: var(--sa-vf-orange); }
 
 /* price range slider */
 .sa-vf-field--price { margin-top: 6px; }
@@ -200,15 +205,15 @@
     display: flex;
     flex-direction: column;
     background: #fff;
-    border: 1px solid var(--sa-vf-border);
-    border-radius: 8px;
+    border-radius: 4px;
     overflow: hidden;
     text-decoration: none;
     color: inherit;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
     transition: box-shadow .18s ease, transform .18s ease;
 }
 .sa-vf-card:hover {
-    box-shadow: 0 8px 22px rgba(0,0,0,.12);
+    box-shadow: 0 10px 26px rgba(0,0,0,.16);
     transform: translateY(-2px);
 }
 .sa-vf-card__media {
@@ -266,8 +271,8 @@
 .sa-vf-card__rtb { font-size: 12px; color: var(--sa-vf-muted); text-transform: uppercase; letter-spacing: .04em; }
 .sa-vf-card__km {
     display: inline-block;
-    background: #f0f1f3;
-    color: #4b5563;
+    background: var(--sa-vf-orange);
+    color: #fff;
     font-size: 12px;
     font-weight: 600;
     padding: 4px 10px;
@@ -283,8 +288,49 @@
     border: 1px dashed var(--sa-vf-border);
     border-radius: 8px;
 }
-.sa-vf__pager { text-align: center; margin-top: 26px; }
-.sa-vf__more { width: auto; padding: 12px 34px; }
+.sa-vf__pager { margin-top: 28px; }
+.sa-vf-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
+}
+.sa-vf-page {
+    min-width: 40px;
+    height: 40px;
+    padding: 0 12px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--sa-vf-border);
+    border-radius: var(--sa-vf-radius);
+    background: #fff;
+    color: var(--sa-vf-navy);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    transition: background .15s ease, color .15s ease, border-color .15s ease;
+}
+.sa-vf-page:hover:not(:disabled):not(.is-current) {
+    border-color: var(--sa-vf-orange);
+    color: var(--sa-vf-orange);
+}
+.sa-vf-page.is-current {
+    background: var(--sa-vf-orange);
+    border-color: var(--sa-vf-orange);
+    color: #fff;
+    cursor: default;
+}
+.sa-vf-page:disabled { opacity: .4; cursor: not-allowed; }
+.sa-vf-page--gap {
+    border: none;
+    background: none;
+    min-width: 20px;
+    color: var(--sa-vf-muted);
+    cursor: default;
+}
 .sa-vf__loading {
     display: flex;
     align-items: center;

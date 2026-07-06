@@ -19,7 +19,6 @@
     var count    = root.querySelector('.sa-vf__count');
     var sortSel  = root.querySelector('.sa-vf__sort');
     var pager    = root.querySelector('.sa-vf__pager');
-    var moreBtn  = null;
     var loading  = root.querySelector('.sa-vf__loading');
     var modelSel = form.querySelector('[data-facet="model"]');
     var makeSel  = form.querySelector('[data-facet="make"]');
@@ -73,7 +72,7 @@
 
     /* --------------------------------------------------------------- request */
 
-    function request(append) {
+    function request(scrollAfter) {
         if (state.busy) return;
         state.busy = true;
         if (loading) loading.hidden = false;
@@ -97,25 +96,14 @@
         .then(function (res) {
             if (!res || !res.success) throw new Error('bad response');
             var d = res.data;
-            if (append) {
-                grid.insertAdjacentHTML('beforeend', d.html);
-            } else {
-                grid.innerHTML = d.html;
-            }
-            if (count) {
-                // On "load more" the grid accumulates pages, so show the
-                // cumulative range rather than just the appended page's slice.
-                if (append) {
-                    var shown = grid.querySelectorAll('.sa-vf-card').length;
-                    count.textContent = 'Showing 1–' + shown + ' of ' + d.total + ' results';
-                } else {
-                    count.textContent = d.showing;
-                }
-            }
+            grid.innerHTML = d.html;
+            if (count) count.textContent = d.showing;
+            state.page = d.page;
             renderPager(d.page, d.pages);
+            if (scrollAfter) scrollToResults();
         })
         .catch(function () {
-            if (!append) grid.innerHTML = '<div class="sa-vf-empty">Something went wrong loading vehicles. Please try again.</div>';
+            grid.innerHTML = '<div class="sa-vf-empty">Something went wrong loading vehicles. Please try again.</div>';
         })
         .finally(function () {
             state.busy = false;
@@ -123,34 +111,76 @@
         });
     }
 
+    /* Which page numbers to show: first, last, current ±1, with gaps. */
+    function pageList(page, pages) {
+        var out = [], last = 0;
+        for (var i = 1; i <= pages; i++) {
+            if (i === 1 || i === pages || (i >= page - 1 && i <= page + 1)) {
+                if (last && i - last > 1) out.push('…');
+                out.push(i);
+                last = i;
+            }
+        }
+        return out;
+    }
+
     function renderPager(page, pages) {
         pager.setAttribute('data-page', page);
         pager.setAttribute('data-pages', pages);
-        if (page < pages) {
-            if (!moreBtn) {
-                moreBtn = document.createElement('button');
-                moreBtn.type = 'button';
-                moreBtn.className = 'sa-vf-btn sa-vf__more';
-                moreBtn.textContent = 'Load more vehicles';
-                moreBtn.addEventListener('click', loadMore);
-                pager.appendChild(moreBtn);
+        pager.innerHTML = '';
+        if (pages <= 1) return;
+
+        var nav = document.createElement('div');
+        nav.className = 'sa-vf-pagination';
+
+        nav.appendChild(pageBtn('‹', page - 1, page === 1, false, 'Previous page'));
+        pageList(page, pages).forEach(function (item) {
+            if (item === '…') {
+                var gap = document.createElement('span');
+                gap.className = 'sa-vf-page sa-vf-page--gap';
+                gap.textContent = '…';
+                nav.appendChild(gap);
+            } else {
+                nav.appendChild(pageBtn(item, item, false, item === page, 'Page ' + item));
             }
-            moreBtn.hidden = false;
-        } else if (moreBtn) {
-            moreBtn.hidden = true;
-        }
+        });
+        nav.appendChild(pageBtn('›', page + 1, page === pages, false, 'Next page'));
+
+        pager.appendChild(nav);
     }
 
-    /* Re-run from page 1 (any filter change). */
+    function pageBtn(label, target, disabled, current, aria) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'sa-vf-page' + (current ? ' is-current' : '');
+        b.textContent = label;
+        b.setAttribute('aria-label', aria);
+        if (current) b.setAttribute('aria-current', 'page');
+        if (disabled) {
+            b.disabled = true;
+        } else if (!current) {
+            b.addEventListener('click', function () { goToPage(target); });
+        }
+        return b;
+    }
+
+    function goToPage(n) {
+        state.page = Math.max(1, n);
+        request(true); // scroll after loading
+    }
+
+    function scrollToResults() {
+        var results = root.querySelector('.sa-vf__results');
+        if (!results) return;
+        var top = results.getBoundingClientRect().top + window.pageYOffset - 20;
+        window.scrollTo({ top: top, behavior: 'smooth' });
+    }
+
+    /* Re-run from page 1 (any filter change). No scroll — user is at the top. */
     var applyFilters = debounce(function () {
         state.page = 1;
         request(false);
     }, 250);
-
-    function loadMore() {
-        state.page += 1;
-        request(true);
-    }
 
     /* ----------------------------------------------------- dependent models */
 
@@ -271,11 +301,6 @@
         request(false);
     });
 
-    if (moreBtn === null) {
-        var existing = pager.querySelector('.sa-vf__more');
-        if (existing) { moreBtn = existing; moreBtn.addEventListener('click', loadMore); }
-    }
-
     var toggle = root.querySelector('.sa-vf-toggle');
     var sidebar = root.querySelector('.sa-vf__sidebar');
     if (toggle && sidebar) {
@@ -288,4 +313,9 @@
     /* ----------------------------------------------------------------- boot */
     updateModels();
     initRange();
+    // Render numbered pagination from the server-seeded state.
+    renderPager(
+        parseInt(pager.getAttribute('data-page'), 10) || 1,
+        parseInt(pager.getAttribute('data-pages'), 10) || 1
+    );
 })();
