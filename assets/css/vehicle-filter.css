@@ -292,7 +292,9 @@
     padding: 5px 12px;
     border-radius: 3px 0 0 3px;
 }
-.sa-vf-card.is-sold .sa-vf-card__media img { opacity: .82; }
+/* Dim only the BASE image on sold cards — not the hover overlay, which must
+   stay at opacity:0 (otherwise both images show at once = double exposure). */
+.sa-vf-card.is-sold .sa-vf-card__img:not(.sa-vf-card__img--hover) { opacity: .82; }
 
 .sa-vf-card__body { padding: 15px 18px 20px; }
 .sa-vf-card__title {
