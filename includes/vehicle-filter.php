@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.5.0' );
+    define( 'SA_VF_VERSION', '1.6.0' );
 }
 
 /**
@@ -730,28 +730,48 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
     return $ids;
 }
 
-/** Render the featured strip. Returns '' when there are no products. */
-function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings' ) {
-    $ids = sa_vf_featured_ids( $category_id, $limit );
-    if ( ! $ids ) return '';
+/**
+ * Slider shell used by the featured and qualified carousels.
+ *
+ * @param string $items_html rendered .sa-vf-featured__item markup (may be '')
+ * @param string $title      heading ('' to omit)
+ * @param bool   $full       full-bleed (edge-to-edge) width
+ * @param array  $attrs      extra attributes for the wrapper (e.g. data-qualified)
+ * @param string $msg        placeholder/status text shown when there are no items yet
+ */
+function sa_vf_featured_shell( $items_html, $title = '', $full = false, $attrs = [], $msg = '' ) {
+    $classes = 'sa-vf-featured' . ( $full ? ' sa-vf-featured--full' : '' );
+    $attr_str = '';
+    foreach ( $attrs as $k => $v ) {
+        $attr_str .= ' ' . esc_attr( $k ) . '="' . esc_attr( $v ) . '"';
+    }
 
     ob_start(); ?>
-    <div class="sa-vf-featured">
+    <div class="<?php echo esc_attr( $classes ); ?>"<?php echo $attr_str; // phpcs:ignore WordPress.Security.EscapeOutput ?>>
         <?php if ( $title !== '' ) : ?>
             <h2 class="sa-vf-featured__title"><span><?php echo esc_html( $title ); ?></span></h2>
         <?php endif; ?>
         <div class="sa-vf-featured__viewport">
             <button type="button" class="sa-vf-featured__nav sa-vf-featured__nav--prev" aria-label="Previous vehicles">&#8249;</button>
-            <div class="sa-vf-featured__track">
-                <?php foreach ( $ids as $id ) : ?>
-                    <div class="sa-vf-featured__item"><?php echo sa_vf_render_card( $id ); // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
-                <?php endforeach; ?>
-            </div>
+            <div class="sa-vf-featured__track"><?php echo $items_html; // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
             <button type="button" class="sa-vf-featured__nav sa-vf-featured__nav--next" aria-label="More vehicles">&#8250;</button>
         </div>
+        <p class="sa-vf-featured__msg"<?php echo $msg === '' ? ' hidden' : ''; ?>><?php echo esc_html( $msg ); ?></p>
     </div>
     <?php
     return ob_get_clean();
+}
+
+/** Render the featured strip. Returns '' when there are no products. */
+function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false ) {
+    $ids = sa_vf_featured_ids( $category_id, $limit );
+    if ( ! $ids ) return '';
+
+    $items = '';
+    foreach ( $ids as $id ) {
+        $items .= '<div class="sa-vf-featured__item">' . sa_vf_render_card( $id ) . '</div>';
+    }
+    return sa_vf_featured_shell( $items, $title, $full );
 }
 
 add_shortcode( 'sa_featured_vehicles', 'sa_vf_featured_shortcode' );
@@ -761,6 +781,7 @@ function sa_vf_featured_shortcode( $atts ) {
         'category' => '',                 // product_cat id/slug; empty = current archive term
         'limit'    => 8,
         'title'    => 'Featured Listings',
+        'full'     => 'no',               // "yes" = full-bleed width
     ], $atts, 'sa_featured_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
@@ -777,8 +798,97 @@ function sa_vf_featured_shortcode( $atts ) {
         }
     }
 
-    return sa_vf_render_featured( $cat_id, (int) $atts['limit'], $atts['title'] );
+    $full = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+
+    return sa_vf_render_featured( $cat_id, (int) $atts['limit'], $atts['title'], $full );
 }
+
+/* ===========================================================================
+ * Qualified-vehicles carousel (matches the lead's monthly rental limit)
+ * ======================================================================== */
+
+/** Vehicle IDs with _price <= $limit, one per model, priciest-affordable first. */
+function sa_vf_qualified_ids( $limit, $per = 15 ) {
+    $limit = (float) $limit;
+    if ( $limit <= 0 ) return [];
+
+    $q = new WP_Query( [
+        'post_type'      => 'product',
+        'post_status'    => 'publish',
+        'posts_per_page' => -1,
+        'fields'         => 'ids',
+        'no_found_rows'  => true,
+        'meta_key'       => '_price',
+        'orderby'        => 'meta_value_num',
+        'order'          => 'DESC',
+        'meta_query'     => [ [
+            'key'     => '_price',
+            'value'   => $limit,
+            'compare' => '<=',
+            'type'    => 'NUMERIC',
+        ] ],
+    ] );
+
+    $out = [];
+    $seen = [];
+    foreach ( $q->posts as $id ) {
+        $terms = get_the_terms( $id, 'pa_model' );
+        $model = ( $terms && ! is_wp_error( $terms ) ) ? reset( $terms )->slug : '';
+        if ( $model !== '' ) {
+            if ( isset( $seen[ $model ] ) ) continue;
+            $seen[ $model ] = 1;
+        }
+        $out[] = (int) $id;
+        if ( count( $out ) >= $per ) break;
+    }
+    return $out;
+}
+
+add_action( 'wp_ajax_sa_vf_qualified',        'sa_vf_ajax_qualified' );
+add_action( 'wp_ajax_nopriv_sa_vf_qualified', 'sa_vf_ajax_qualified' );
+
+function sa_vf_ajax_qualified() {
+    $limit = isset( $_POST['rental_limit'] ) ? floatval( $_POST['rental_limit'] ) : 0;
+
+    // Fall back to a lead_id lookup, mirroring /qualified-vehicles.
+    if ( $limit <= 0 && ! empty( $_POST['lead_id'] ) ) {
+        global $wpdb;
+        $table    = $wpdb->prefix . 'lead_qualifications';
+        $db_limit = $wpdb->get_var( $wpdb->prepare(
+            "SELECT rental_limit FROM {$table} WHERE lead_id = %d", (int) $_POST['lead_id']
+        ) );
+        if ( $db_limit !== null ) $limit = (float) $db_limit;
+    }
+
+    $per = isset( $_POST['limit'] ) ? max( 1, min( 30, (int) $_POST['limit'] ) ) : 15;
+    $ids = sa_vf_qualified_ids( $limit, $per );
+
+    $html = '';
+    foreach ( $ids as $id ) {
+        $html .= '<div class="sa-vf-featured__item">' . sa_vf_render_card( $id ) . '</div>';
+    }
+    wp_send_json_success( [ 'html' => $html, 'count' => count( $ids ) ] );
+}
+
+add_shortcode( 'sa_qualified_vehicles', function ( $atts ) {
+    $atts = shortcode_atts( [
+        'title' => '',       // no title by default
+        'full'  => 'no',
+        'limit' => 15,
+    ], $atts, 'sa_qualified_vehicles' );
+
+    wp_enqueue_style( 'sa-vehicle-filter' );
+    wp_enqueue_script( 'sa-vehicle-filter' );
+    wp_localize_script( 'sa-vehicle-filter', 'SA_VF_Q', [ 'ajax_url' => admin_url( 'admin-ajax.php' ) ] );
+
+    $full = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+
+    // Empty shell; JS reads the lead's rental limit and fills the track.
+    return sa_vf_featured_shell( '', $atts['title'], $full, [
+        'data-qualified' => '1',
+        'data-limit'     => (int) $atts['limit'],
+    ], 'Loading vehicles in your budget…' );
+} );
 
 /* ===========================================================================
  * Disclaimer + breadcrumb shortcodes
