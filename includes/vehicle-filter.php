@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.4.0' );
+    define( 'SA_VF_VERSION', '1.4.1' );
 }
 
 /**
@@ -822,10 +822,16 @@ add_shortcode( 'sa_breadcrumbs', function () {
         $items[] = $on_listings ? $current( get_the_title( $lp ) ) : $link( get_the_title( $lp ), get_permalink( $lp ) );
     }
 
-    // Current location term only (flat: Home / Listings / <Term>).
+    // Category ancestors + current term (Home / Listings / <Parent> / <Child>).
     if ( $is_cat ) {
         $term = get_queried_object();
         if ( $term && ! is_wp_error( $term ) ) {
+            foreach ( array_reverse( get_ancestors( $term->term_id, 'product_cat', 'taxonomy' ) ) as $aid ) {
+                $a = get_term( $aid, 'product_cat' );
+                if ( ! $a || is_wp_error( $a ) ) continue;
+                $al = get_term_link( $a );
+                $items[] = is_wp_error( $al ) ? $current( $a->name ) : $link( $a->name, $al );
+            }
             $items[] = $current( $term->name );
         }
     }
@@ -903,8 +909,7 @@ function sa_vf_render_listings( $cat_id = 0, $title = '', $subtitle = '', $show 
         'disclaimer'  => true,
     ], $show );
 
-    $cat_id   = (int) $cat_id;
-    $stacked  = ( $subtitle !== '' );
+    $cat_id = (int) $cat_id;
 
     ob_start();
     echo '<div class="sa-vf-archive">';
@@ -913,15 +918,18 @@ function sa_vf_render_listings( $cat_id = 0, $title = '', $subtitle = '', $show 
         echo sa_vf_render_featured( $cat_id, 8, 'Featured Listings' ); // phpcs:ignore WordPress.Security.EscapeOutput
     }
 
-    echo '<div class="sa-vf-archive__head' . ( $stacked ? ' sa-vf-archive__head--stacked' : '' ) . '">';
+    echo '<div class="sa-vf-archive__head">';
+    // Title left, breadcrumb far right on the same row.
+    echo '<div class="sa-vf-archive__head-row">';
     if ( $title !== '' ) {
         echo '<h1 class="sa-vf-archive__title">' . esc_html( $title ) . '</h1>';
     }
-    if ( $subtitle !== '' ) {
-        echo '<p class="sa-vf-archive__subtitle">' . wp_kses_post( $subtitle ) . '</p>';
-    }
     if ( $show['breadcrumbs'] ) {
         echo do_shortcode( '[sa_breadcrumbs]' );
+    }
+    echo '</div>';
+    if ( $subtitle !== '' ) {
+        echo '<p class="sa-vf-archive__subtitle">' . wp_kses_post( $subtitle ) . '</p>';
     }
     echo '</div>';
 
