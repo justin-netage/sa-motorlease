@@ -107,6 +107,7 @@
             state.page = d.page;
             renderPager(d.page, d.pages);
             applyAvailability(d.available);
+            setApplyCount(d.total);
             if (scrollAfter) scrollToResults();
         })
         .catch(function () {
@@ -252,6 +253,7 @@
             maxVal.textContent = fmtR(b);
             hidMin.value = a;
             hidMax.value = b;
+            updateActiveCount();
         }
 
         minInput.addEventListener('input', paint);
@@ -261,7 +263,40 @@
         paint();
     }
 
+    /* --------------------------------------------- active filter count badge */
+
+    var toggleCount = root.querySelector('.sa-vf-toggle__count');
+    var applyBtn    = root.querySelector('.sa-vf__drawer-apply');
+
+    function updateActiveCount() {
+        var n = 0;
+        form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
+            if (s.value) n++;
+        });
+        if (hideSold && hideSold.checked) n++;
+        var pmin = form.querySelector('[name="price_min"]');
+        var pmax = form.querySelector('[name="price_max"]');
+        if ((pmin && Number(pmin.value) > CFG.price.min) ||
+            (pmax && Number(pmax.value) < CFG.price.max)) n++;
+        if (toggleCount) {
+            toggleCount.textContent = n;
+            toggleCount.hidden = n === 0;
+        }
+    }
+
+    function setApplyCount(total) {
+        if (!applyBtn || typeof total === 'undefined') return;
+        applyBtn.textContent = (Number(total) === 1) ? 'Show 1 vehicle' : 'Show ' + total + ' vehicles';
+    }
+
+    function onFilterChange() {
+        updateActiveCount();
+        applyFilters();
+    }
+
     /* --------------------------------------------------------------- events */
+
+    var hideSold = form.querySelector('[name="hide_sold"]');
 
     form.querySelectorAll('.sa-vf-select').forEach(function (s) {
         if (s.hasAttribute('data-region-nav')) {
@@ -272,11 +307,10 @@
             });
             return;
         }
-        s.addEventListener('change', applyFilters);
+        s.addEventListener('change', onFilterChange);
     });
 
-    var hideSold = form.querySelector('[name="hide_sold"]');
-    if (hideSold) hideSold.addEventListener('change', applyFilters);
+    if (hideSold) hideSold.addEventListener('change', onFilterChange);
     if (sortSel) sortSel.addEventListener('change', applyFilters);
 
     var filterBtn = form.querySelector('.sa-vf-btn--filter');
@@ -285,15 +319,13 @@
         request(false);
     });
 
-    var clearBtn = form.querySelector('.sa-vf-btn--clear');
-    if (clearBtn) clearBtn.addEventListener('click', function () {
+    function clearAll() {
         form.querySelectorAll('.sa-vf-select').forEach(function (s) {
             if (s.hasAttribute('data-region-nav')) return; // keep current location
             s.value = '';
         });
         if (hideSold) hideSold.checked = false;
         if (sortSel) sortSel.value = 'featured';
-        // reset price handles
         var minInput = root.querySelector('.sa-vf-range__min');
         var maxInput = root.querySelector('.sa-vf-range__max');
         if (minInput && maxInput) {
@@ -301,22 +333,58 @@
             maxInput.value = CFG.price.max;
             minInput.dispatchEvent(new Event('input'));
         }
+        updateActiveCount();
         state.page = 1;
         request(false);
+    }
+
+    root.querySelectorAll('.sa-vf-btn--clear').forEach(function (b) {
+        b.addEventListener('click', clearAll);
     });
 
-    var toggle = root.querySelector('.sa-vf-toggle');
-    var sidebar = root.querySelector('.sa-vf__sidebar');
-    if (toggle && sidebar) {
-        toggle.addEventListener('click', function () {
-            var open = sidebar.classList.toggle('is-open');
-            toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-        });
+    /* --------------------------------------------------- mobile filter drawer */
+
+    var toggle   = root.querySelector('.sa-vf-toggle');
+    var sidebar  = root.querySelector('.sa-vf__sidebar');
+    var closeBtn = root.querySelector('.sa-vf__drawer-close');
+
+    function openDrawer() {
+        if (!sidebar) return;
+        sidebar.classList.add('is-open');
+        if (toggle) toggle.setAttribute('aria-expanded', 'true');
+        document.body.classList.add('sa-vf-open');
     }
+    function closeDrawer() {
+        if (!sidebar) return;
+        sidebar.classList.remove('is-open');
+        if (toggle) toggle.setAttribute('aria-expanded', 'false');
+        document.body.classList.remove('sa-vf-open');
+    }
+
+    if (toggle) toggle.addEventListener('click', function () {
+        sidebar && sidebar.classList.contains('is-open') ? closeDrawer() : openDrawer();
+    });
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    if (applyBtn) applyBtn.addEventListener('click', function () {
+        closeDrawer();
+        scrollToResults();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && sidebar && sidebar.classList.contains('is-open')) closeDrawer();
+    });
+    window.addEventListener('resize', function () {
+        if (window.innerWidth > 860 && sidebar && sidebar.classList.contains('is-open')) closeDrawer();
+    });
 
     /* ----------------------------------------------------------------- boot */
     applyAvailability(CFG.available);
     initRange();
+    updateActiveCount();
+    // Seed the "Show N vehicles" button from the server-rendered count.
+    if (count) {
+        var m = count.textContent.match(/of\s+([\d,]+)/);
+        if (m) setApplyCount(parseInt(m[1].replace(/,/g, ''), 10));
+    }
     // Render numbered pagination from the server-seeded state.
     renderPager(
         parseInt(pager.getAttribute('data-page'), 10) || 1,

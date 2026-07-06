@@ -14,13 +14,19 @@ $price_max  = $initial['price_max'] !== null ? $initial['price_max'] : $bounds['
 ?>
 <div class="sa-vf" data-price-min="<?php echo esc_attr( $bounds['min'] ); ?>" data-price-max="<?php echo esc_attr( $bounds['max'] ); ?>">
 
-    <button type="button" class="sa-vf-toggle" aria-expanded="false">
+    <button type="button" class="sa-vf-toggle" aria-expanded="false" aria-controls="sa-vf-sidebar">
         <span class="sa-vf-toggle__icon">&#9776;</span> Filter Vehicles
+        <span class="sa-vf-toggle__count" hidden>0</span>
     </button>
 
     <div class="sa-vf__layout">
 
         <aside class="sa-vf__sidebar" id="sa-vf-sidebar">
+            <div class="sa-vf__drawer-head">
+                <span class="sa-vf__drawer-title">Filters</span>
+                <button type="button" class="sa-vf__drawer-close" aria-label="Close filters">&times;</button>
+            </div>
+            <div class="sa-vf__sidebar-scroll">
             <h2 class="sa-vf__heading">Filter Options</h2>
             <form class="sa-vf-form" onsubmit="return false;">
 
@@ -105,6 +111,11 @@ $price_max  = $initial['price_max'] !== null ? $initial['price_max'] : $bounds['
                     <button type="button" class="sa-vf-btn sa-vf-btn--clear">Clear</button>
                 </div>
             </form>
+            </div><?php // .sa-vf__sidebar-scroll ?>
+            <div class="sa-vf__drawer-foot">
+                <button type="button" class="sa-vf-btn sa-vf-btn--clear sa-vf__drawer-clear">Clear</button>
+                <button type="button" class="sa-vf-btn sa-vf__drawer-apply">Show results</button>
+            </div>
         </aside>
 
         <section class="sa-vf__results">
