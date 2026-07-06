@@ -12,6 +12,10 @@
     --sa-vf-muted: #6b7280;
     --sa-vf-bg: #ffffff;
     --sa-vf-radius: 6px;
+    /* Height of the site's sticky header — sticky sidebar + scroll offsets
+       clear this so nothing hides under it. Adjust if the header height changes. */
+    --sa-vf-header: 80px;
+    --sa-vf-sticky-top: calc(var(--sa-vf-header) + 16px);
     box-sizing: border-box;
     font-family: inherit;
     color: var(--sa-vf-navy);
@@ -22,6 +26,24 @@
    (e.g. .sa-vf__loading{display:flex} / .sa-vf-btn{display:inline-block}),
    otherwise the loader and hidden "load more" button stay permanently visible. */
 .sa-vf [hidden] { display: none !important; }
+
+/* ------------------------------------------- location archive wrapper */
+.sa-vf-archive {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 28px 20px 60px;
+}
+.sa-vf-archive__title {
+    font-size: 26px;
+    font-weight: 800;
+    color: #1c3a5e;
+    margin: 0 0 6px;
+}
+.sa-vf-archive__desc {
+    color: #6b7280;
+    margin: 0 0 22px;
+    max-width: 70ch;
+}
 
 /* ----------------------------------------------------------------- layout */
 .sa-vf__layout {
@@ -38,7 +60,7 @@
     border-radius: var(--sa-vf-radius);
     padding: 14px 13px;
     position: sticky;
-    top: 16px;
+    top: var(--sa-vf-sticky-top);
 }
 .sa-vf__heading {
     font-size: 14px;
@@ -351,7 +373,7 @@
 /* Keep the spinner + label centred in view even when the grid is tall. */
 .sa-vf__loading-inner {
     position: sticky;
-    top: 120px;
+    top: calc(var(--sa-vf-sticky-top) + 40px);
     display: flex;
     flex-direction: column;
     align-items: center;
