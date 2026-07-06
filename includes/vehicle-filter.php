@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.2.2' );
+    define( 'SA_VF_VERSION', '1.3.1' );
 }
 
 /**
@@ -358,6 +358,62 @@ function sa_vf_matching_ids( array $args ) {
     return $q->posts;
 }
 
+/** Distinct term slugs present across a set of product IDs for a taxonomy. */
+function sa_vf_distinct_term_slugs( array $ids, $taxonomy ) {
+    if ( ! $ids || ! taxonomy_exists( $taxonomy ) ) return [];
+    $slugs = wp_get_object_terms( $ids, $taxonomy, [ 'fields' => 'slugs' ] );
+    return is_wp_error( $slugs ) ? [] : array_values( array_unique( $slugs ) );
+}
+
+/** Which km buckets are represented across a set of product IDs. */
+function sa_vf_available_km_buckets( array $ids ) {
+    if ( ! $ids || ! taxonomy_exists( 'pa_kilometers' ) ) return [];
+    $names = wp_get_object_terms( $ids, 'pa_kilometers', [ 'fields' => 'names' ] );
+    if ( is_wp_error( $names ) ) return [];
+    $out = [];
+    foreach ( sa_vf_km_buckets() as $b ) {
+        foreach ( $names as $name ) {
+            $km = (int) preg_replace( '/[^0-9]/', '', $name );
+            if ( $km >= $b['min'] && $km < $b['max'] ) { $out[] = $b['key']; break; }
+        }
+    }
+    return $out;
+}
+
+/**
+ * For each facet, the option values still possible given the OTHER active
+ * filters (a facet's own selection is excluded so the user can switch within
+ * it). Powers hiding impossible options in the dropdowns.
+ */
+function sa_vf_available( array $args ) {
+    $full_ids = sa_vf_matching_ids( $args );
+    $avail    = [];
+
+    foreach ( sa_vf_facets() as $facet ) {
+        $k = $facet['key'];
+        if ( ! empty( $args['facets'][ $k ] ) ) {
+            $a2 = $args;
+            unset( $a2['facets'][ $k ] ); // ignore this facet's own selection
+            $ids = sa_vf_matching_ids( $a2 );
+        } else {
+            $ids = $full_ids;
+        }
+        $avail[ $k ] = sa_vf_distinct_term_slugs( $ids, $facet['tax'] );
+    }
+
+    // Km buckets (exclude the km selection itself).
+    if ( $args['km'] !== '' ) {
+        $a2 = $args;
+        $a2['km'] = '';
+        $km_ids = sa_vf_matching_ids( $a2 );
+    } else {
+        $km_ids = $full_ids;
+    }
+    $avail['km'] = sa_vf_available_km_buckets( $km_ids );
+
+    return $avail;
+}
+
 /** Numeric value of a product's single-value attribute term, or null. */
 function sa_vf_term_num( $id, $taxonomy ) {
     $terms = get_the_terms( $id, $taxonomy );
@@ -523,6 +579,7 @@ function sa_vf_ajax_query() {
     // would otherwise go stale and 403 every filter request.
     $args   = sa_vf_parse_args( $_POST );
     $result = sa_vf_run_query( $args );
+    $result['available'] = sa_vf_available( $args );
     wp_send_json_success( $result );
 }
 
@@ -606,7 +663,7 @@ function sa_vf_shortcode( $atts ) {
         'ajax_url'   => admin_url( 'admin-ajax.php' ),
         'nonce'      => wp_create_nonce( 'sa_vf' ),
         'price'      => $bounds,
-        'models'     => sa_vf_make_model_map(),
+        'available'  => sa_vf_available( $initial ), // options still possible on load
         'per_page'   => (int) SA_VF_PER_PAGE,
         'sort'       => sa_vf_sort_options(),
         'category'   => (int) $initial['category'], // keeps AJAX requests locked to the location

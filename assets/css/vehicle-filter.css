@@ -126,15 +126,20 @@
 }
 .sa-vf-featured__item .sa-vf-card { width: 100%; }
 .sa-vf-featured__item .sa-vf-card__img { -webkit-user-drag: none; user-select: none; }
+/* On the carousel cards the "p/m - RENT TO BUY" sits on its own line below the
+   price (the listings grid keeps it inline). */
+.sa-vf-featured .sa-vf-card__price { display: block; }
+.sa-vf-featured .sa-vf-card__price strong { display: block; line-height: 1.1; margin-bottom: 2px; }
 
-/* Prev/next arrows — small circles. !important + specificity so the theme's
-   own <button> styling can't square them off or resize them. */
+/* Prev/next arrows — circles with a crisp CSS chevron (recolours on hover via
+   currentColor). !important + specificity so the theme's own <button> styling
+   can't square/resize them. */
 .sa-vf-featured .sa-vf-featured__nav {
     position: absolute;
-    top: 40%;
+    top: 50%;
     transform: translateY(-50%);
-    width: 30px !important;
-    height: 30px !important;
+    width: 36px !important;
+    height: 36px !important;
     min-width: 0 !important;
     min-height: 0 !important;
     padding: 0 !important;
@@ -143,20 +148,34 @@
     border: 1px solid var(--sa-vf-border, #d9dde2);
     background: #fff;
     color: #003b65;
-    font-size: 16px;
-    font-weight: 700;
-    line-height: 1;
+    font-size: 0; /* hide the fallback glyph; the chevron is drawn below */
+    line-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(0,0,0,.16);
+    box-shadow: 0 2px 10px rgba(0,0,0,.18);
     z-index: 3;
-    transition: background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease;
+    transition: background .15s ease, color .15s ease, border-color .15s ease, opacity .15s ease, box-shadow .15s ease;
 }
-.sa-vf-featured .sa-vf-featured__nav--prev { left: 4px; }
-.sa-vf-featured .sa-vf-featured__nav--next { right: 4px; }
-.sa-vf-featured .sa-vf-featured__nav:hover { background: #f47b24; color: #fff; border-color: #f47b24; }
+.sa-vf-featured .sa-vf-featured__nav::before {
+    content: "";
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-top: 2px solid currentColor;
+    border-right: 2px solid currentColor;
+}
+.sa-vf-featured .sa-vf-featured__nav--prev::before { transform: rotate(-135deg); margin-left: 3px; }
+.sa-vf-featured .sa-vf-featured__nav--next::before { transform: rotate(45deg);   margin-right: 3px; }
+.sa-vf-featured .sa-vf-featured__nav--prev { left: 0; }
+.sa-vf-featured .sa-vf-featured__nav--next { right: 0; }
+.sa-vf-featured .sa-vf-featured__nav:hover {
+    background: #f47b24;
+    color: #fff;
+    border-color: #f47b24;
+    box-shadow: 0 4px 14px rgba(244,123,36,.4);
+}
 .sa-vf-featured .sa-vf-featured__nav:disabled { opacity: 0; pointer-events: none; }
 
 @media (max-width: 1024px) {
@@ -168,9 +187,10 @@
 }
 @media (max-width: 520px) {
     .sa-vf-featured { padding: 12px 8px 8px; }
-    .sa-vf-featured__viewport { padding: 0 28px; }
+    .sa-vf-featured__viewport { padding: 0 34px; }
     .sa-vf-featured__track { grid-auto-columns: 84%; }
-    .sa-vf-featured .sa-vf-featured__nav { width: 26px !important; height: 26px !important; font-size: 14px; }
+    .sa-vf-featured .sa-vf-featured__nav { width: 30px !important; height: 30px !important; }
+    .sa-vf-featured .sa-vf-featured__nav::before { width: 7px; height: 7px; }
 }
 
 /* ------------------------------------------- title row + breadcrumb + disclaimer */
@@ -183,6 +203,8 @@
     margin-bottom: 6px;
 }
 .sa-vf-crumbs {
+    margin-left: auto; /* push to the far right of the title row */
+    text-align: right;
     font-size: 13px;
     color: #6b7280;
     text-transform: uppercase;
