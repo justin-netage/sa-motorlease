@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.0.9' );
+    define( 'SA_VF_VERSION', '1.1.0' );
 }
 
 /**
@@ -565,4 +565,105 @@ function sa_vf_shortcode( $atts ) {
     ob_start();
     include __DIR__ . '/vehicle-filter-template.php';
     return ob_get_clean();
+}
+
+/* ===========================================================================
+ * Featured listings carousel (category-scoped)
+ * ======================================================================== */
+
+/**
+ * Product IDs for the featured strip: WooCommerce "Featured" products in the
+ * given category, topped up with the newest vehicles in that category when
+ * fewer than $limit are flagged. category_id 0 = whole catalogue.
+ */
+function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
+    $limit = max( 1, (int) $limit );
+
+    $base = [];
+    if ( $category_id ) {
+        $base[] = [
+            'taxonomy'         => 'product_cat',
+            'field'            => 'term_id',
+            'terms'            => (int) $category_id,
+            'include_children' => true,
+        ];
+    }
+
+    $featured = $base;
+    $featured[] = [ 'taxonomy' => 'product_visibility', 'field' => 'name', 'terms' => 'featured' ];
+    if ( count( $featured ) > 1 ) $featured = array_merge( [ 'relation' => 'AND' ], $featured );
+
+    $ids = get_posts( [
+        'post_type'      => 'product',
+        'post_status'    => 'publish',
+        'posts_per_page' => $limit,
+        'fields'         => 'ids',
+        'no_found_rows'  => true,
+        'orderby'        => 'date',
+        'order'          => 'DESC',
+        'tax_query'      => $featured,
+    ] );
+
+    // Top up with the newest vehicles in the same scope if needed.
+    if ( count( $ids ) < $limit ) {
+        $fill_args = [
+            'post_type'      => 'product',
+            'post_status'    => 'publish',
+            'posts_per_page' => $limit - count( $ids ),
+            'fields'         => 'ids',
+            'no_found_rows'  => true,
+            'orderby'        => 'date',
+            'order'          => 'DESC',
+            'post__not_in'   => $ids ?: [ 0 ],
+        ];
+        if ( $base ) $fill_args['tax_query'] = ( count( $base ) > 1 ) ? array_merge( [ 'relation' => 'AND' ], $base ) : $base;
+        $ids = array_merge( $ids, get_posts( $fill_args ) );
+    }
+
+    return $ids;
+}
+
+/** Render the featured strip. Returns '' when there are no products. */
+function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings' ) {
+    $ids = sa_vf_featured_ids( $category_id, $limit );
+    if ( ! $ids ) return '';
+
+    ob_start(); ?>
+    <div class="sa-vf-featured">
+        <?php if ( $title !== '' ) : ?>
+            <h2 class="sa-vf-featured__title"><?php echo esc_html( $title ); ?></h2>
+        <?php endif; ?>
+        <div class="sa-vf-featured__track">
+            <?php foreach ( $ids as $id ) : ?>
+                <div class="sa-vf-featured__item"><?php echo sa_vf_render_card( $id ); // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
+            <?php endforeach; ?>
+        </div>
+    </div>
+    <?php
+    return ob_get_clean();
+}
+
+add_shortcode( 'sa_featured_vehicles', 'sa_vf_featured_shortcode' );
+
+function sa_vf_featured_shortcode( $atts ) {
+    $atts = shortcode_atts( [
+        'category' => '',                 // product_cat id/slug; empty = current archive term
+        'limit'    => 8,
+        'title'    => 'Featured Listings',
+    ], $atts, 'sa_featured_vehicles' );
+
+    wp_enqueue_style( 'sa-vehicle-filter' );
+
+    $cat_id = 0;
+    if ( $atts['category'] !== '' ) {
+        $p = sa_vf_parse_args( [ 'category' => (string) $atts['category'] ] );
+        $cat_id = $p['category'];
+    } elseif ( function_exists( 'is_product_category' ) && is_product_category() ) {
+        $term = get_queried_object();
+        if ( $term && ! is_wp_error( $term ) && isset( $term->term_id ) ) {
+            $cat_id = (int) $term->term_id;
+        }
+    }
+
+    return sa_vf_render_featured( $cat_id, (int) $atts['limit'], $atts['title'] );
 }
