@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.2.1' );
+    define( 'SA_VF_VERSION', '1.2.2' );
 }
 
 /**
@@ -755,4 +755,90 @@ add_shortcode( 'sa_breadcrumbs', function () {
     ] );
     echo '</nav>';
     return ob_get_clean();
+} );
+
+/* ===========================================================================
+ * Full listings page composition (shared by the main page shortcode and the
+ * location-archive takeover, so both look identical)
+ * ======================================================================== */
+
+/**
+ * Render a complete listings block: featured slider → title + breadcrumb row →
+ * optional intro → disclaimer → the filter itself.
+ *
+ * @param int    $cat_id product_cat term to scope everything to (0 = whole site)
+ * @param string $title  H1 text ('' to omit)
+ * @param array  $show   toggles: featured, breadcrumbs, disclaimer, intro
+ */
+function sa_vf_render_listings( $cat_id = 0, $title = '', $show = [] ) {
+    $show = array_merge( [
+        'featured'    => true,
+        'breadcrumbs' => true,
+        'disclaimer'  => true,
+        'intro'       => false,
+    ], $show );
+
+    $cat_id = (int) $cat_id;
+
+    ob_start();
+    echo '<div class="sa-vf-archive">';
+
+    if ( $show['featured'] ) {
+        echo sa_vf_render_featured( $cat_id, 8, 'Featured Listings' ); // phpcs:ignore WordPress.Security.EscapeOutput
+    }
+
+    echo '<div class="sa-vf-archive__head">';
+    if ( $title !== '' ) {
+        echo '<h1 class="sa-vf-archive__title">' . esc_html( $title ) . '</h1>';
+    }
+    if ( $show['breadcrumbs'] ) {
+        echo do_shortcode( '[sa_breadcrumbs]' );
+    }
+    echo '</div>';
+
+    if ( $show['intro'] && $cat_id ) {
+        $desc = strip_shortcodes( term_description( $cat_id, 'product_cat' ) );
+        if ( trim( wp_strip_all_tags( $desc ) ) !== '' ) {
+            echo '<div class="sa-vf-archive__desc">' . wp_kses_post( $desc ) . '</div>';
+        }
+    }
+
+    if ( $show['disclaimer'] ) {
+        echo do_shortcode( '[sa_listings_disclaimer]' );
+    }
+
+    echo do_shortcode( '[sa_vehicle_filter' . ( $cat_id ? ' category="' . $cat_id . '"' : '' ) . ']' );
+
+    echo '</div>';
+    return ob_get_clean();
+}
+
+add_shortcode( 'sa_vehicle_listings', function ( $atts ) {
+    $atts = shortcode_atts( [
+        'title'       => 'Vehicle Listings',
+        'category'    => '',
+        'featured'    => 'yes',
+        'breadcrumbs' => 'yes',
+        'disclaimer'  => 'yes',
+    ], $atts, 'sa_vehicle_listings' );
+
+    $cat_id = 0;
+    if ( $atts['category'] !== '' ) {
+        $p = sa_vf_parse_args( [ 'category' => (string) $atts['category'] ] );
+        $cat_id = $p['category'];
+    } elseif ( function_exists( 'is_product_category' ) && is_product_category() ) {
+        $term = get_queried_object();
+        if ( $term && ! is_wp_error( $term ) && isset( $term->term_id ) ) {
+            $cat_id = (int) $term->term_id;
+        }
+    }
+
+    $yes = function ( $v ) { return ! in_array( strtolower( (string) $v ), [ 'no', '0', 'false', '' ], true ); };
+
+    return sa_vf_render_listings( $cat_id, $atts['title'], [
+        'featured'    => $yes( $atts['featured'] ),
+        'breadcrumbs' => $yes( $atts['breadcrumbs'] ),
+        'disclaimer'  => $yes( $atts['disclaimer'] ),
+        'intro'       => (bool) $cat_id,
+    ] );
 } );

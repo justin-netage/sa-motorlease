@@ -35,6 +35,9 @@
 /* On location archives the .sa-vf-archive wrapper already provides the
    container, so don't double the gutters on the inner widget. */
 .sa-vf-archive .sa-vf { max-width: none; margin: 0; padding: 0; }
+/* Inside the archive wrapper the container already provides the gutters, so
+   the featured strip aligns to the same edges as the title/filter. */
+.sa-vf-archive .sa-vf-featured { max-width: none; margin: 0; padding-left: 0; padding-right: 0; }
 .sa-vf *, .sa-vf *::before, .sa-vf *::after,
 .sa-vf-featured *, .sa-vf-featured *::before, .sa-vf-featured *::after,
 .sa-vf-archive *, .sa-vf-archive *::before, .sa-vf-archive *::after { box-sizing: border-box; }
