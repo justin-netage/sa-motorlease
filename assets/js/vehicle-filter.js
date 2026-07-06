@@ -44,7 +44,8 @@
     function collect() {
         var data = {};
         form.querySelectorAll('.sa-vf-select').forEach(function (s) {
-            if (s.value) data[s.name] = s.value;
+            if (s.hasAttribute('data-region-nav')) return; // navigator, not a filter
+            if (s.name && s.value) data[s.name] = s.value;
         });
         var pmin = form.querySelector('[name="price_min"]');
         var pmax = form.querySelector('[name="price_max"]');
@@ -280,6 +281,14 @@
     /* --------------------------------------------------------------- events */
 
     form.querySelectorAll('.sa-vf-select').forEach(function (s) {
+        if (s.hasAttribute('data-region-nav')) {
+            // Category page: the Region dropdown navigates to another location
+            // archive instead of filtering in place.
+            s.addEventListener('change', function () {
+                if (s.value) window.location.href = s.value;
+            });
+            return;
+        }
         s.addEventListener('change', function () {
             if (s === makeSel) updateModels();
             applyFilters();
@@ -298,7 +307,10 @@
 
     var clearBtn = form.querySelector('.sa-vf-btn--clear');
     if (clearBtn) clearBtn.addEventListener('click', function () {
-        form.querySelectorAll('.sa-vf-select').forEach(function (s) { s.value = ''; });
+        form.querySelectorAll('.sa-vf-select').forEach(function (s) {
+            if (s.hasAttribute('data-region-nav')) return; // keep current location
+            s.value = '';
+        });
         if (hideSold) hideSold.checked = false;
         if (sortSel) sortSel.value = 'featured';
         // reset price handles

@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.2.0' );
+    define( 'SA_VF_VERSION', '1.2.2' );
 }
 
 /**
@@ -92,6 +92,52 @@ function sa_vf_year_terms() {
         return intval( $b['name'] ) <=> intval( $a['name'] );
     } );
     return $terms;
+}
+
+/**
+ * Region navigator for a location category page. Instead of filtering, the
+ * Region dropdown lets the visitor jump between the location archives of the
+ * current province (so they can't wander outside e.g. Gauteng). Returns
+ * [ 'current' => term_id, 'options' => [ [id,name,url], ... ] ] or null when
+ * the category has no usable location tree.
+ */
+function sa_vf_region_nav( $category_id ) {
+    $category_id = (int) $category_id;
+    if ( ! $category_id || ! term_exists( $category_id, 'product_cat' ) ) return null;
+
+    // Top-most ancestor is the province; if none, the term is itself a province.
+    $ancestors   = get_ancestors( $category_id, 'product_cat', 'taxonomy' );
+    $province_id = $ancestors ? (int) end( $ancestors ) : $category_id;
+    $province    = get_term( $province_id, 'product_cat' );
+    if ( ! $province || is_wp_error( $province ) ) return null;
+
+    $options = [];
+
+    // "All <Province>" first — links back to the province archive.
+    $prov_link = get_term_link( $province );
+    if ( ! is_wp_error( $prov_link ) ) {
+        $options[] = [ 'id' => $province_id, 'name' => 'All ' . $province->name, 'url' => $prov_link ];
+    }
+
+    // Each area under the province.
+    $areas = get_terms( [
+        'taxonomy'   => 'product_cat',
+        'parent'     => $province_id,
+        'hide_empty' => true,
+        'orderby'    => 'name',
+        'order'      => 'ASC',
+    ] );
+    if ( ! is_wp_error( $areas ) ) {
+        foreach ( $areas as $a ) {
+            $link = get_term_link( $a );
+            if ( is_wp_error( $link ) ) continue;
+            $options[] = [ 'id' => (int) $a->term_id, 'name' => $a->name, 'url' => $link ];
+        }
+    }
+
+    if ( count( $options ) < 2 ) return null; // nothing meaningful to navigate
+
+    return [ 'current' => $category_id, 'options' => $options ];
 }
 
 /** min/max monthly price across published vehicles (cached 15 min). */
@@ -552,6 +598,10 @@ function sa_vf_shortcode( $atts ) {
     $result = sa_vf_run_query( $initial );
     $bounds = sa_vf_price_bounds();
 
+    // On a category page the Region dropdown navigates between location
+    // archives (scoped to the current province) instead of filtering.
+    $region_nav = $initial['category'] ? sa_vf_region_nav( $initial['category'] ) : null;
+
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF', [
         'ajax_url'   => admin_url( 'admin-ajax.php' ),
         'nonce'      => wp_create_nonce( 'sa_vf' ),
@@ -705,4 +755,90 @@ add_shortcode( 'sa_breadcrumbs', function () {
     ] );
     echo '</nav>';
     return ob_get_clean();
+} );
+
+/* ===========================================================================
+ * Full listings page composition (shared by the main page shortcode and the
+ * location-archive takeover, so both look identical)
+ * ======================================================================== */
+
+/**
+ * Render a complete listings block: featured slider → title + breadcrumb row →
+ * optional intro → disclaimer → the filter itself.
+ *
+ * @param int    $cat_id product_cat term to scope everything to (0 = whole site)
+ * @param string $title  H1 text ('' to omit)
+ * @param array  $show   toggles: featured, breadcrumbs, disclaimer, intro
+ */
+function sa_vf_render_listings( $cat_id = 0, $title = '', $show = [] ) {
+    $show = array_merge( [
+        'featured'    => true,
+        'breadcrumbs' => true,
+        'disclaimer'  => true,
+        'intro'       => false,
+    ], $show );
+
+    $cat_id = (int) $cat_id;
+
+    ob_start();
+    echo '<div class="sa-vf-archive">';
+
+    if ( $show['featured'] ) {
+        echo sa_vf_render_featured( $cat_id, 8, 'Featured Listings' ); // phpcs:ignore WordPress.Security.EscapeOutput
+    }
+
+    echo '<div class="sa-vf-archive__head">';
+    if ( $title !== '' ) {
+        echo '<h1 class="sa-vf-archive__title">' . esc_html( $title ) . '</h1>';
+    }
+    if ( $show['breadcrumbs'] ) {
+        echo do_shortcode( '[sa_breadcrumbs]' );
+    }
+    echo '</div>';
+
+    if ( $show['intro'] && $cat_id ) {
+        $desc = strip_shortcodes( term_description( $cat_id, 'product_cat' ) );
+        if ( trim( wp_strip_all_tags( $desc ) ) !== '' ) {
+            echo '<div class="sa-vf-archive__desc">' . wp_kses_post( $desc ) . '</div>';
+        }
+    }
+
+    if ( $show['disclaimer'] ) {
+        echo do_shortcode( '[sa_listings_disclaimer]' );
+    }
+
+    echo do_shortcode( '[sa_vehicle_filter' . ( $cat_id ? ' category="' . $cat_id . '"' : '' ) . ']' );
+
+    echo '</div>';
+    return ob_get_clean();
+}
+
+add_shortcode( 'sa_vehicle_listings', function ( $atts ) {
+    $atts = shortcode_atts( [
+        'title'       => 'Vehicle Listings',
+        'category'    => '',
+        'featured'    => 'yes',
+        'breadcrumbs' => 'yes',
+        'disclaimer'  => 'yes',
+    ], $atts, 'sa_vehicle_listings' );
+
+    $cat_id = 0;
+    if ( $atts['category'] !== '' ) {
+        $p = sa_vf_parse_args( [ 'category' => (string) $atts['category'] ] );
+        $cat_id = $p['category'];
+    } elseif ( function_exists( 'is_product_category' ) && is_product_category() ) {
+        $term = get_queried_object();
+        if ( $term && ! is_wp_error( $term ) && isset( $term->term_id ) ) {
+            $cat_id = (int) $term->term_id;
+        }
+    }
+
+    $yes = function ( $v ) { return ! in_array( strtolower( (string) $v ), [ 'no', '0', 'false', '' ], true ); };
+
+    return sa_vf_render_listings( $cat_id, $atts['title'], [
+        'featured'    => $yes( $atts['featured'] ),
+        'breadcrumbs' => $yes( $atts['breadcrumbs'] ),
+        'disclaimer'  => $yes( $atts['disclaimer'] ),
+        'intro'       => (bool) $cat_id,
+    ] );
 } );

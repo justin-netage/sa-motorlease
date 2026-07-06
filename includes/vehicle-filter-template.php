@@ -25,7 +25,24 @@ $price_max  = $initial['price_max'] !== null ? $initial['price_max'] : $bounds['
             <form class="sa-vf-form" onsubmit="return false;">
 
                 <?php foreach ( $facets as $facet ) :
-                    $k     = $facet['key'];
+                    $k = $facet['key'];
+
+                    // On a category page the Region field becomes a location
+                    // navigator: choosing a region redirects to that archive
+                    // (scoped to the current province) instead of filtering.
+                    if ( $k === 'region' && ! empty( $region_nav ) ) : ?>
+                        <div class="sa-vf-field">
+                            <select class="sa-vf-select" data-region-nav="1" aria-label="Region">
+                                <?php foreach ( $region_nav['options'] as $opt ) : ?>
+                                    <option value="<?php echo esc_url( $opt['url'] ); ?>" <?php selected( $region_nav['current'], $opt['id'] ); ?>>
+                                        <?php echo esc_html( $opt['name'] ); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <?php continue;
+                    endif;
+
                     $terms = ( $k === 'year' ) ? sa_vf_year_terms() : sa_vf_terms( $facet['tax'] );
                     if ( ! $terms ) continue;
                     $current = $sel[ $k ] ?? '';
