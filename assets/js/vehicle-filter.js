@@ -72,10 +72,13 @@
 
     /* --------------------------------------------------------------- request */
 
+    var results = root.querySelector('.sa-vf__results');
+
     function request(scrollAfter) {
         if (state.busy) return;
         state.busy = true;
         if (loading) loading.hidden = false;
+        if (results) results.classList.add('is-loading');
 
         var data = collect();
         syncUrl(data);
@@ -108,6 +111,7 @@
         .finally(function () {
             state.busy = false;
             if (loading) loading.hidden = true;
+            if (results) results.classList.remove('is-loading');
         });
     }
 

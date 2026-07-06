@@ -36,27 +36,27 @@
     background: var(--sa-vf-bg);
     border: 1px solid var(--sa-vf-border);
     border-radius: var(--sa-vf-radius);
-    padding: 18px 16px;
+    padding: 14px 13px;
     position: sticky;
     top: 16px;
 }
 .sa-vf__heading {
-    font-size: 15px;
+    font-size: 14px;
     letter-spacing: .08em;
     text-transform: uppercase;
-    margin: 0 0 14px;
+    margin: 0 0 10px;
     color: var(--sa-vf-navy);
     font-weight: 700;
 }
-.sa-vf-field { margin-bottom: 12px; }
+.sa-vf-field { margin-bottom: 7px; }
 
 /* Extra specificity + !important so the theme's own <select> styling (native
    arrow, background-size that was blowing our icon up huge) can't win. */
 .sa-vf .sa-vf-select {
     width: 100%;
     height: auto;
-    min-height: 44px;
-    padding: 10px 34px 10px 12px; /* extra right padding clears the arrow */
+    min-height: 38px;
+    padding: 8px 32px 8px 11px; /* extra right padding clears the arrow */
     border: 1px solid var(--sa-vf-border);
     border-radius: var(--sa-vf-radius);
     background-color: #fff;
@@ -79,11 +79,11 @@
 .sa-vf .sa-vf-select:focus { outline: none; border-color: var(--sa-vf-orange); }
 
 /* price range slider */
-.sa-vf-field--price { margin-top: 6px; }
+.sa-vf-field--price { margin-top: 2px; margin-bottom: 6px; }
 .sa-vf-range {
     position: relative;
-    height: 28px;
-    margin: 6px 4px 0;
+    height: 26px;
+    margin: 2px 4px 0;
 }
 .sa-vf-range__track {
     position: absolute;
@@ -136,33 +136,34 @@
     display: flex;
     justify-content: center;
     gap: 6px;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
-    margin-top: 6px;
+    margin-top: 4px;
 }
 .sa-vf-range__unit {
     text-align: center;
-    font-size: 12px;
+    font-size: 11px;
     font-style: italic;
     color: var(--sa-vf-muted);
-    margin-top: 2px;
+    margin-top: 1px;
 }
 
+.sa-vf-field--check { margin-top: 9px; }
 .sa-vf-check {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 14px;
+    font-size: 13px;
     cursor: pointer;
 }
 .sa-vf-check input { width: 16px; height: 16px; accent-color: var(--sa-vf-orange); }
 
 /* buttons */
-.sa-vf-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.sa-vf-actions { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; }
 .sa-vf-btn {
     display: inline-block;
     width: 100%;
-    padding: 11px 16px;
+    padding: 10px 16px;
     border: none;
     border-radius: var(--sa-vf-radius);
     background: var(--sa-vf-orange);
@@ -192,13 +193,19 @@
 .sa-vf__sortwrap span { color: var(--sa-vf-muted); white-space: nowrap; }
 .sa-vf__sort { width: auto; min-width: 190px; }
 
+/* results is the positioning context for the loading overlay */
+.sa-vf__results { position: relative; }
+
 .sa-vf__grid {
     display: grid;
     /* minmax(0,1fr) stops image content from blowing the columns past the
        container (which pushed the 3rd card off-screen). */
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 22px;
+    transition: opacity .15s ease;
 }
+/* Dim + lock the grid while a request is in flight. */
+.sa-vf__results.is-loading .sa-vf__grid { opacity: .35; pointer-events: none; }
 
 /* cards */
 .sa-vf-card {
@@ -331,18 +338,32 @@
     color: var(--sa-vf-muted);
     cursor: default;
 }
+/* Overlay covering the results while loading — impossible to miss. */
 .sa-vf__loading {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
     display: flex;
-    align-items: center;
     justify-content: center;
-    gap: 10px;
-    margin-top: 18px;
-    color: var(--sa-vf-muted);
-    font-size: 14px;
+    align-items: flex-start;
+    background: rgba(255,255,255,.75);
+}
+/* Keep the spinner + label centred in view even when the grid is tall. */
+.sa-vf__loading-inner {
+    position: sticky;
+    top: 120px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 24px 0;
+    color: var(--sa-vf-navy);
+    font-size: 15px;
+    font-weight: 600;
 }
 .sa-vf__spinner {
-    width: 18px; height: 18px;
-    border: 2px solid var(--sa-vf-border);
+    width: 34px; height: 34px;
+    border: 3px solid var(--sa-vf-border);
     border-top-color: var(--sa-vf-orange);
     border-radius: 50%;
     animation: sa-vf-spin .7s linear infinite;
