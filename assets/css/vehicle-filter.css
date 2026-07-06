@@ -18,6 +18,11 @@
 }
 .sa-vf *, .sa-vf *::before, .sa-vf *::after { box-sizing: border-box; }
 
+/* The [hidden] attribute must always win over the component's display rules
+   (e.g. .sa-vf__loading{display:flex} / .sa-vf-btn{display:inline-block}),
+   otherwise the loader and hidden "load more" button stay permanently visible. */
+.sa-vf [hidden] { display: none !important; }
+
 /* ----------------------------------------------------------------- layout */
 .sa-vf__layout {
     display: grid;
