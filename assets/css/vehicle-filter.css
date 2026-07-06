@@ -202,6 +202,20 @@
     gap: 6px 16px;
     margin-bottom: 6px;
 }
+/* Category pages stack the title, subtitle and breadcrumb, left-aligned. */
+.sa-vf-archive__head--stacked { display: block; }
+.sa-vf-archive__subtitle {
+    color: #003b65;
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.4;
+    margin: 4px 0 6px;
+}
+.sa-vf-archive__head--stacked .sa-vf-crumbs {
+    margin-left: 0;
+    text-align: left;
+    margin-top: 2px;
+}
 .sa-vf-crumbs {
     margin-left: auto; /* push to the far right of the title row */
     text-align: right;
