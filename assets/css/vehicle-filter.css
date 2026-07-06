@@ -7,7 +7,7 @@
 .sa-vf {
     --sa-vf-orange: #f47b24;      /* brand orange */
     --sa-vf-orange-dark: #d9661a; /* darker shade for hover states */
-    --sa-vf-navy: #1c3a5e;
+    --sa-vf-navy: #003b65;
     --sa-vf-border: #d9dde2;
     --sa-vf-muted: #6b7280;
     --sa-vf-bg: #ffffff;
@@ -43,7 +43,7 @@
 .sa-vf-archive__title {
     font-size: 26px;
     font-weight: 800;
-    color: #1c3a5e;
+    color: #003b65;
     margin: 0 0 6px;
 }
 .sa-vf-archive__desc {
@@ -98,7 +98,7 @@
     appearance: none !important;
     -webkit-appearance: none !important;
     -moz-appearance: none !important;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath fill='none' stroke='%231c3a5e' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 7 7.5 13 1.5'/%3E%3C/svg%3E") !important;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='9' viewBox='0 0 14 9'%3E%3Cpath fill='none' stroke='%23003b65' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M1 1.5 7 7.5 13 1.5'/%3E%3C/svg%3E") !important;
     background-repeat: no-repeat !important;
     background-position: right 13px center !important;
     background-size: 12px 8px !important; /* pin the arrow size, ignore theme */
@@ -206,7 +206,7 @@
 }
 .sa-vf-btn:hover { background: var(--sa-vf-orange-dark); }
 .sa-vf-btn--clear { background: var(--sa-vf-navy); }
-.sa-vf-btn--clear:hover { background: #14293f; }
+.sa-vf-btn--clear:hover { background: #002a49; }
 
 /* --------------------------------------------------------------- results */
 .sa-vf__topbar {
