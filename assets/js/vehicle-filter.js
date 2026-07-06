@@ -106,6 +106,7 @@
             if (count) count.textContent = d.showing;
             state.page = d.page;
             renderPager(d.page, d.pages);
+            applyAvailability(d.available);
             if (scrollAfter) scrollToResults();
         })
         .catch(function () {
@@ -196,46 +197,28 @@
         request(false);
     }, 250);
 
-    /* ----------------------------------------------------- dependent models */
+    /* ------------------------------------------------- available options */
 
-    /** Snapshot the full model <option> list so we can restore it. */
-    var allModelOptions = modelSel
-        ? Array.prototype.map.call(modelSel.options, function (o) {
-            return { value: o.value, text: o.textContent.trim() };
-        })
-        : [];
-
-    function updateModels() {
-        if (!modelSel || !makeSel) return;
-        var make = makeSel.value;
-        var keep = modelSel.value;
-        var allowed = (make && CFG.models[make]) ? CFG.models[make] : null;
-
-        modelSel.innerHTML = '';
-        allModelOptions.forEach(function (opt) {
-            if (opt.value === '') {
-                add(opt); // placeholder
-            } else if (!allowed || allowed[opt.value]) {
-                add(opt);
-            }
+    /**
+     * Hide the options in each facet dropdown that can't produce a result given
+     * the other active filters. `map` is { facetKey: [allowedValues...] } from
+     * the server. The currently-selected value is always kept visible.
+     */
+    function applyAvailability(map) {
+        if (!map) return;
+        form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (sel) {
+            var key = sel.getAttribute('data-facet');
+            var allowed = map[key];
+            if (!allowed) return; // no data for this facet → leave untouched
+            var set = {};
+            allowed.forEach(function (v) { set[v] = 1; });
+            Array.prototype.forEach.call(sel.options, function (opt) {
+                if (opt.value === '') return; // keep the placeholder
+                var ok = !!set[opt.value] || opt.value === sel.value;
+                opt.hidden = !ok;
+                opt.disabled = !ok;
+            });
         });
-        // Restore prior selection if still valid.
-        if (keep && modelSel.querySelector('option[value="' + cssEsc(keep) + '"]')) {
-            modelSel.value = keep;
-        } else {
-            modelSel.value = '';
-        }
-
-        function add(opt) {
-            var o = document.createElement('option');
-            o.value = opt.value;
-            o.textContent = opt.text;
-            modelSel.appendChild(o);
-        }
-    }
-
-    function cssEsc(s) {
-        return (window.CSS && CSS.escape) ? CSS.escape(s) : s.replace(/"/g, '\\"');
     }
 
     /* --------------------------------------------------------- price slider */
@@ -289,10 +272,7 @@
             });
             return;
         }
-        s.addEventListener('change', function () {
-            if (s === makeSel) updateModels();
-            applyFilters();
-        });
+        s.addEventListener('change', applyFilters);
     });
 
     var hideSold = form.querySelector('[name="hide_sold"]');
@@ -321,7 +301,6 @@
             maxInput.value = CFG.price.max;
             minInput.dispatchEvent(new Event('input'));
         }
-        updateModels();
         state.page = 1;
         request(false);
     });
@@ -336,7 +315,7 @@
     }
 
     /* ----------------------------------------------------------------- boot */
-    updateModels();
+    applyAvailability(CFG.available);
     initRange();
     // Render numbered pagination from the server-seeded state.
     renderPager(
