@@ -126,6 +126,10 @@
 }
 .sa-vf-featured__item .sa-vf-card { width: 100%; }
 .sa-vf-featured__item .sa-vf-card__img { -webkit-user-drag: none; user-select: none; }
+/* On the carousel cards the "p/m - RENT TO BUY" sits on its own line below the
+   price (the listings grid keeps it inline). */
+.sa-vf-featured .sa-vf-card__price { display: block; }
+.sa-vf-featured .sa-vf-card__price strong { display: block; line-height: 1.1; margin-bottom: 2px; }
 
 /* Prev/next arrows — circles with a crisp CSS chevron (recolours on hover via
    currentColor). !important + specificity so the theme's own <button> styling
