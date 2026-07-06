@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.6.2' );
+    define( 'SA_VF_VERSION', '1.6.3' );
 }
 
 /**
@@ -683,6 +683,12 @@ function sa_vf_shortcode( $atts ) {
  * given category, topped up with the newest vehicles in that category when
  * fewer than $limit are flagged. category_id 0 = whole catalogue.
  */
+/** tax_query clause excluding sold vehicles, or null if the taxonomy is absent. */
+function sa_vf_not_sold_clause() {
+    if ( ! taxonomy_exists( 'pa_sold' ) ) return null;
+    return [ 'taxonomy' => 'pa_sold', 'field' => 'name', 'terms' => 'Yes', 'operator' => 'NOT IN' ];
+}
+
 function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
     $limit = max( 1, (int) $limit );
 
@@ -695,6 +701,9 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
             'include_children' => true,
         ];
     }
+    // Never feature sold vehicles.
+    $ns = sa_vf_not_sold_clause();
+    if ( $ns ) $base[] = $ns;
 
     $featured = $base;
     $featured[] = [ 'taxonomy' => 'product_visibility', 'field' => 'name', 'terms' => 'featured' ];
@@ -775,6 +784,19 @@ function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured
     return sa_vf_featured_shell( $items, $title, $full, $attrs, '', $extra_class );
 }
 
+/**
+ * Interpret a `bg` attribute → the panel class(es) and any inline background.
+ *  '' / 'none'            → no panel (transparent)
+ *  'translucent'/'glass'  → frosted translucent panel (CSS-driven)
+ *  a colour (#fff, hex8…) → solid/custom panel with inline background
+ */
+function sa_vf_panel_bg( $bg ) {
+    $b = strtolower( trim( (string) $bg ) );
+    if ( $b === '' || $b === 'none' )              return [ 'class' => '', 'inline' => '' ];
+    if ( $b === 'translucent' || $b === 'glass' )  return [ 'class' => 'sa-vf-featured--panel sa-vf-featured--glass', 'inline' => '' ];
+    return [ 'class' => 'sa-vf-featured--panel', 'inline' => trim( (string) $bg ) ];
+}
+
 /** Inline style (max-width + optional background) for a carousel container. */
 function sa_vf_container_style( $max_width, $full, $bg = '' ) {
     $parts = [];
@@ -816,14 +838,14 @@ function sa_vf_featured_shortcode( $atts ) {
         }
     }
 
-    $full   = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
-    $style  = sa_vf_container_style( $atts['max_width'], $full, $atts['bg'] );
-    $panel  = ( trim( (string) $atts['bg'] ) !== '' && strtolower( trim( (string) $atts['bg'] ) ) !== 'none' );
+    $full  = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+    $bg    = sa_vf_panel_bg( $atts['bg'] );
+    $style = sa_vf_container_style( $atts['max_width'], $full, $bg['inline'] );
 
     return sa_vf_render_featured(
         $cat_id, (int) $atts['limit'], $atts['title'], $full,
         $style ? [ 'style' => $style ] : [],
-        $panel ? 'sa-vf-featured--panel' : ''
+        $bg['class']
     );
 }
 
@@ -836,7 +858,7 @@ function sa_vf_qualified_ids( $limit, $per = 15 ) {
     $limit = (float) $limit;
     if ( $limit <= 0 ) return [];
 
-    $q = new WP_Query( [
+    $q_args = [
         'post_type'      => 'product',
         'post_status'    => 'publish',
         'posts_per_page' => -1,
@@ -851,7 +873,10 @@ function sa_vf_qualified_ids( $limit, $per = 15 ) {
             'compare' => '<=',
             'type'    => 'NUMERIC',
         ] ],
-    ] );
+    ];
+    $ns = sa_vf_not_sold_clause();
+    if ( $ns ) $q_args['tax_query'] = [ $ns ]; // exclude sold vehicles
+    $q = new WP_Query( $q_args );
 
     $out = [];
     $seen = [];
@@ -899,8 +924,8 @@ add_shortcode( 'sa_qualified_vehicles', function ( $atts ) {
         'title'     => '',       // no title by default
         'full'      => 'no',
         'limit'     => 15,
-        'max_width' => '1100',   // tighter container by default; '' for the standard 1360
-        'bg'        => '#f5f6f8', // opaque panel background; 'none' for transparent
+        'max_width' => '1100',       // tighter container by default; '' for the standard 1360
+        'bg'        => 'translucent', // frosted see-through panel; 'none' or a colour to change
     ], $atts, 'sa_qualified_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
@@ -908,8 +933,8 @@ add_shortcode( 'sa_qualified_vehicles', function ( $atts ) {
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF_Q', [ 'ajax_url' => admin_url( 'admin-ajax.php' ) ] );
 
     $full  = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
-    $style = sa_vf_container_style( $atts['max_width'], $full, $atts['bg'] );
-    $panel = ( trim( (string) $atts['bg'] ) !== '' && strtolower( trim( (string) $atts['bg'] ) ) !== 'none' );
+    $bg    = sa_vf_panel_bg( $atts['bg'] );
+    $style = sa_vf_container_style( $atts['max_width'], $full, $bg['inline'] );
 
     $attrs = [
         'data-qualified' => '1',
@@ -918,7 +943,7 @@ add_shortcode( 'sa_qualified_vehicles', function ( $atts ) {
     if ( $style ) $attrs['style'] = $style;
 
     // Empty shell; JS reads the lead's rental limit and fills the track.
-    return sa_vf_featured_shell( '', $atts['title'], $full, $attrs, 'Loading vehicles in your budget…', $panel ? 'sa-vf-featured--panel' : '' );
+    return sa_vf_featured_shell( '', $atts['title'], $full, $attrs, 'Loading vehicles in your budget…', $bg['class'] );
 } );
 
 /* ===========================================================================
