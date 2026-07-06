@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.3.1' );
+    define( 'SA_VF_VERSION', '1.3.2' );
 }
 
 /**
@@ -799,19 +799,44 @@ add_shortcode( 'sa_listings_disclaimer', function () {
 } );
 
 add_shortcode( 'sa_breadcrumbs', function () {
-    if ( ! function_exists( 'woocommerce_breadcrumb' ) ) return '';
     wp_enqueue_style( 'sa-vehicle-filter' );
-    ob_start();
-    echo '<nav class="sa-vf-crumbs">';
-    woocommerce_breadcrumb( [
-        'wrap_before' => '',
-        'wrap_after'  => '',
-        'before'      => '',
-        'after'       => '',
-        'delimiter'   => ' <span class="sa-vf-crumbs__sep">/</span> ',
-    ] );
-    echo '</nav>';
-    return ob_get_clean();
+
+    $sep   = ' <span class="sa-vf-crumbs__sep">/</span> ';
+    $items = [];
+    $link  = function ( $label, $url ) {
+        return '<a href="' . esc_url( $url ) . '">' . esc_html( $label ) . '</a>';
+    };
+    $current = function ( $label ) {
+        return '<span class="sa-vf-crumbs__current">' . esc_html( $label ) . '</span>';
+    };
+
+    // Home
+    $items[] = $link( 'Home', home_url( '/' ) );
+
+    // Listings root (configurable page)
+    $lp = function_exists( 'sa_motorlease_get_setting' ) ? (int) sa_motorlease_get_setting( 'listings_page_id', 0 ) : 0;
+    $is_cat = function_exists( 'is_product_category' ) && is_product_category();
+
+    if ( $lp && get_post_status( $lp ) ) {
+        $on_listings = is_page( $lp ) && ! $is_cat;
+        $items[] = $on_listings ? $current( get_the_title( $lp ) ) : $link( get_the_title( $lp ), get_permalink( $lp ) );
+    }
+
+    // Category ancestors + current term
+    if ( $is_cat ) {
+        $term = get_queried_object();
+        if ( $term && ! is_wp_error( $term ) ) {
+            foreach ( array_reverse( get_ancestors( $term->term_id, 'product_cat', 'taxonomy' ) ) as $aid ) {
+                $a = get_term( $aid, 'product_cat' );
+                if ( ! $a || is_wp_error( $a ) ) continue;
+                $al = get_term_link( $a );
+                $items[] = is_wp_error( $al ) ? $current( $a->name ) : $link( $a->name, $al );
+            }
+            $items[] = $current( $term->name );
+        }
+    }
+
+    return '<nav class="sa-vf-crumbs">' . implode( $sep, $items ) . '</nav>';
 } );
 
 /* ===========================================================================

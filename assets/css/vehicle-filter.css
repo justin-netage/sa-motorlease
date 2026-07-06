@@ -212,6 +212,7 @@
 }
 .sa-vf-crumbs a { color: #6b7280; text-decoration: none; }
 .sa-vf-crumbs a:hover { color: #f47b24; }
+.sa-vf-crumbs__current { color: #003b65; font-weight: 600; }
 .sa-vf-crumbs__sep { margin: 0 6px; color: #c2c7cf; }
 .sa-vf-disclaimer {
     color: #6b7280;
