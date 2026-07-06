@@ -29,6 +29,14 @@
 .sa-vf-archive .sa-vf { max-width: none; margin: 0; padding: 0; }
 .sa-vf *, .sa-vf *::before, .sa-vf *::after { box-sizing: border-box; }
 
+/* When logged in, the WordPress admin bar (32px, 46px on small screens) sits
+   above the fixed header, pushing it down — so the sticky offset needs to clear
+   it too. Only affects logged-in users; public visitors have no admin bar. */
+.admin-bar .sa-vf { --sa-vf-sticky-top: calc(var(--sa-vf-header) + 16px + 32px); }
+@media screen and (max-width: 782px) {
+    .admin-bar .sa-vf { --sa-vf-sticky-top: calc(var(--sa-vf-header) + 16px + 46px); }
+}
+
 /* The [hidden] attribute must always win over the component's display rules
    (e.g. .sa-vf__loading{display:flex} / .sa-vf-btn{display:inline-block}),
    otherwise the loader and hidden "load more" button stay permanently visible. */
