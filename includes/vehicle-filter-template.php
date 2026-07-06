@@ -107,13 +107,14 @@ $price_max  = $initial['price_max'] !== null ? $initial['price_max'] : $bounds['
 
             <div class="sa-vf__grid" aria-live="polite"><?php echo $result['html']; // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
 
-            <div class="sa-vf__pager" data-page="<?php echo esc_attr( $result['page'] ); ?>" data-pages="<?php echo esc_attr( $result['pages'] ); ?>">
-                <?php if ( $result['pages'] > 1 ) : ?>
-                    <button type="button" class="sa-vf-btn sa-vf__more">Load more vehicles</button>
-                <?php endif; ?>
-            </div>
+            <div class="sa-vf__pager" data-page="<?php echo esc_attr( $result['page'] ); ?>" data-pages="<?php echo esc_attr( $result['pages'] ); ?>"></div>
 
-            <div class="sa-vf__loading" hidden><span class="sa-vf__spinner"></span> Loading…</div>
+            <div class="sa-vf__loading" hidden>
+                <div class="sa-vf__loading-inner">
+                    <span class="sa-vf__spinner"></span>
+                    <span>Loading vehicles…</span>
+                </div>
+            </div>
         </section>
 
     </div>
