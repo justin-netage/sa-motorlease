@@ -56,6 +56,12 @@
 .sa-vf [hidden] { display: none !important; }
 
 /* ------------------------------------------- location archive wrapper */
+/* Flatsome still renders its (now empty) shop/category title banner above our
+   takeover on product_cat archives — hide it; we draw our own title inside
+   .sa-vf-archive. */
+.tax-product_cat .shop-page-title,
+.tax-product_cat .page-title.shop-page-title { display: none !important; }
+
 .sa-vf-archive {
     max-width: 1360px;
     margin: 0 auto;
