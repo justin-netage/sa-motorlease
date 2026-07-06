@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.6.0' );
+    define( 'SA_VF_VERSION', '1.6.1' );
 }
 
 /**
@@ -763,7 +763,7 @@ function sa_vf_featured_shell( $items_html, $title = '', $full = false, $attrs =
 }
 
 /** Render the featured strip. Returns '' when there are no products. */
-function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false ) {
+function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false, $attrs = [] ) {
     $ids = sa_vf_featured_ids( $category_id, $limit );
     if ( ! $ids ) return '';
 
@@ -771,17 +771,26 @@ function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured
     foreach ( $ids as $id ) {
         $items .= '<div class="sa-vf-featured__item">' . sa_vf_render_card( $id ) . '</div>';
     }
-    return sa_vf_featured_shell( $items, $title, $full );
+    return sa_vf_featured_shell( $items, $title, $full, $attrs );
+}
+
+/** Build an inline max-width style for a carousel container ('' when full/blank). */
+function sa_vf_container_style( $max_width, $full ) {
+    $max_width = trim( (string) $max_width );
+    if ( $full || $max_width === '' ) return '';
+    if ( is_numeric( $max_width ) ) $max_width .= 'px';
+    return 'max-width:' . $max_width;
 }
 
 add_shortcode( 'sa_featured_vehicles', 'sa_vf_featured_shortcode' );
 
 function sa_vf_featured_shortcode( $atts ) {
     $atts = shortcode_atts( [
-        'category' => '',                 // product_cat id/slug; empty = current archive term
-        'limit'    => 8,
-        'title'    => 'Featured Listings',
-        'full'     => 'no',               // "yes" = full-bleed width
+        'category'  => '',                // product_cat id/slug; empty = current archive term
+        'limit'     => 8,
+        'title'     => 'Featured Listings',
+        'full'      => 'no',              // "yes" = full-bleed width
+        'max_width' => '',                // e.g. 1100 or 1100px to tighten the container
     ], $atts, 'sa_featured_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
@@ -798,9 +807,10 @@ function sa_vf_featured_shortcode( $atts ) {
         }
     }
 
-    $full = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+    $full  = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+    $style = sa_vf_container_style( $atts['max_width'], $full );
 
-    return sa_vf_render_featured( $cat_id, (int) $atts['limit'], $atts['title'], $full );
+    return sa_vf_render_featured( $cat_id, (int) $atts['limit'], $atts['title'], $full, $style ? [ 'style' => $style ] : [] );
 }
 
 /* ===========================================================================
@@ -872,22 +882,27 @@ function sa_vf_ajax_qualified() {
 
 add_shortcode( 'sa_qualified_vehicles', function ( $atts ) {
     $atts = shortcode_atts( [
-        'title' => '',       // no title by default
-        'full'  => 'no',
-        'limit' => 15,
+        'title'     => '',       // no title by default
+        'full'      => 'no',
+        'limit'     => 15,
+        'max_width' => '1100',   // tighter container by default; '' for the standard 1360
     ], $atts, 'sa_qualified_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
     wp_enqueue_script( 'sa-vehicle-filter' );
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF_Q', [ 'ajax_url' => admin_url( 'admin-ajax.php' ) ] );
 
-    $full = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+    $full  = in_array( strtolower( (string) $atts['full'] ), [ 'yes', '1', 'true', 'full' ], true );
+    $style = sa_vf_container_style( $atts['max_width'], $full );
 
-    // Empty shell; JS reads the lead's rental limit and fills the track.
-    return sa_vf_featured_shell( '', $atts['title'], $full, [
+    $attrs = [
         'data-qualified' => '1',
         'data-limit'     => (int) $atts['limit'],
-    ], 'Loading vehicles in your budget…' );
+    ];
+    if ( $style ) $attrs['style'] = $style;
+
+    // Empty shell; JS reads the lead's rental limit and fills the track.
+    return sa_vf_featured_shell( '', $atts['title'], $full, $attrs, 'Loading vehicles in your budget…' );
 } );
 
 /* ===========================================================================

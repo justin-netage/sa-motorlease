@@ -84,6 +84,7 @@
     max-width: 1360px;
     margin: 0 auto;
     padding: 12px 24px 8px;
+    background: transparent;
 }
 /* Full-bleed variant: break out of any container to the full viewport width. */
 .sa-vf-featured--full {
