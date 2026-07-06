@@ -5311,6 +5311,7 @@ function sa_motorlease_default_settings() {
         'log_level'            => SA_MOTORLEASE_LOG_WARN,
         'log_retention_days'   => 21,
         'listings_disclaimer'  => 'Please note all vehicle listings are subject to availability and may change without prior notice. Images are for illustration purposes only and may differ from the actual vehicle offered. Prices, specifications, and features are provided as a guide and may vary depending on stock, condition, and applicable fees. Placement on this page does not guarantee that a vehicle is currently available',
+        'listings_page_id'     => 0,
     ];
 }
 
@@ -5607,6 +5608,7 @@ add_action( 'admin_init', function () {
     $f( 'log_level',          'Log level',           'sa_motorlease_field_log_level',          'sa_motorlease_section_logging' );
     $f( 'log_retention_days', 'Log retention days',  'sa_motorlease_field_log_retention_days', 'sa_motorlease_section_logging' );
 
+    $f( 'listings_page_id',    'Listings page',       'sa_motorlease_field_listings_page',       'sa_motorlease_section_listings' );
     $f( 'listings_disclaimer', 'Listings disclaimer', 'sa_motorlease_field_listings_disclaimer', 'sa_motorlease_section_listings' );
 } );
 
@@ -5643,6 +5645,10 @@ function sa_motorlease_sanitize_settings( $input ) {
 
     if ( isset( $input['listings_disclaimer'] ) ) {
         $out['listings_disclaimer'] = wp_kses_post( trim( (string) $input['listings_disclaimer'] ) );
+    }
+
+    if ( isset( $input['listings_page_id'] ) ) {
+        $out['listings_page_id'] = max( 0, (int) $input['listings_page_id'] );
     }
 
     return $out;
@@ -5705,6 +5711,17 @@ function sa_motorlease_field_log_retention_days() {
         esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
     );
     echo '<p class="description">The daily rotate job trims log lines older than this. The constant <code>SA_MOTORLEASE_LOG_RETENTION_DAYS</code>, if defined, takes precedence.</p>';
+}
+
+function sa_motorlease_field_listings_page() {
+    $val = (int) sa_motorlease_get_setting( 'listings_page_id' );
+    wp_dropdown_pages( [
+        'name'              => esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ) . '[listings_page_id]',
+        'selected'          => $val,
+        'show_option_none'  => '— None —',
+        'option_none_value' => 0,
+    ] );
+    echo '<p class="description">The main vehicles page (where you placed <code>[sa_vehicle_listings]</code>). Used as the "Listings" step in the breadcrumb on the listings page and the location category pages.</p>';
 }
 
 function sa_motorlease_field_listings_disclaimer() {

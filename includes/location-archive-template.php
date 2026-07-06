@@ -16,22 +16,14 @@ $term_id = ( $term && ! is_wp_error( $term ) && isset( $term->term_id ) ) ? (int
 get_header();
 
 if ( $term_id ) {
-    $title  = single_term_title( '', false );
+    // Child (area) → "Vehicles - Sandton"; parent (province) → "Gauteng".
+    $title    = $term->parent ? 'Vehicles - ' . $term->name : $term->name;
+    $subtitle = sa_vf_location_subtitle( $term );
 
-    // Include the parent province for area pages, for a clearer heading.
-    $suffix = '';
-    if ( ! empty( $term->parent ) ) {
-        $parent = get_term( $term->parent, 'product_cat' );
-        if ( $parent && ! is_wp_error( $parent ) ) {
-            $suffix = ', ' . $parent->name;
-        }
-    }
-
-    echo sa_vf_render_listings( $term_id, 'Vehicles in ' . $title . $suffix, [ // phpcs:ignore WordPress.Security.EscapeOutput
+    echo sa_vf_render_listings( $term_id, $title, $subtitle, [ // phpcs:ignore WordPress.Security.EscapeOutput
         'featured'    => true,
         'breadcrumbs' => true,
         'disclaimer'  => true,
-        'intro'       => true,
     ] );
 } else {
     echo do_shortcode( '[sa_vehicle_listings]' );

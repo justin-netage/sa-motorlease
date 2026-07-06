@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.3.1' );
+    define( 'SA_VF_VERSION', '1.4.0' );
 }
 
 /**
@@ -799,20 +799,84 @@ add_shortcode( 'sa_listings_disclaimer', function () {
 } );
 
 add_shortcode( 'sa_breadcrumbs', function () {
-    if ( ! function_exists( 'woocommerce_breadcrumb' ) ) return '';
     wp_enqueue_style( 'sa-vehicle-filter' );
-    ob_start();
-    echo '<nav class="sa-vf-crumbs">';
-    woocommerce_breadcrumb( [
-        'wrap_before' => '',
-        'wrap_after'  => '',
-        'before'      => '',
-        'after'       => '',
-        'delimiter'   => ' <span class="sa-vf-crumbs__sep">/</span> ',
-    ] );
-    echo '</nav>';
-    return ob_get_clean();
+
+    $sep   = ' <span class="sa-vf-crumbs__sep">/</span> ';
+    $items = [];
+    $link  = function ( $label, $url ) {
+        return '<a href="' . esc_url( $url ) . '">' . esc_html( $label ) . '</a>';
+    };
+    $current = function ( $label ) {
+        return '<span class="sa-vf-crumbs__current">' . esc_html( $label ) . '</span>';
+    };
+
+    // Home
+    $items[] = $link( 'Home', home_url( '/' ) );
+
+    // Listings root (configurable page)
+    $lp = function_exists( 'sa_motorlease_get_setting' ) ? (int) sa_motorlease_get_setting( 'listings_page_id', 0 ) : 0;
+    $is_cat = function_exists( 'is_product_category' ) && is_product_category();
+
+    if ( $lp && get_post_status( $lp ) ) {
+        $on_listings = is_page( $lp ) && ! $is_cat;
+        $items[] = $on_listings ? $current( get_the_title( $lp ) ) : $link( get_the_title( $lp ), get_permalink( $lp ) );
+    }
+
+    // Current location term only (flat: Home / Listings / <Term>).
+    if ( $is_cat ) {
+        $term = get_queried_object();
+        if ( $term && ! is_wp_error( $term ) ) {
+            $items[] = $current( $term->name );
+        }
+    }
+
+    return '<nav class="sa-vf-crumbs">' . implode( $sep, $items ) . '</nav>';
 } );
+
+/** "Sandton, East Rand, and Pretoria" from a list of names. */
+function sa_vf_human_join( array $items ) {
+    $items = array_values( array_filter( array_map( 'trim', $items ) ) );
+    $n = count( $items );
+    if ( $n === 0 ) return '';
+    if ( $n === 1 ) return $items[0];
+    if ( $n === 2 ) return $items[0] . ' and ' . $items[1];
+    $last = array_pop( $items );
+    return implode( ', ', $items ) . ', and ' . $last;
+}
+
+/**
+ * Auto subtitle for a location term:
+ *  - parent (has children): "Explore Our Gauteng Vehicle Listings: Sandton, East Rand, and Pretoria"
+ *  - child  (has parent):   "Browse Our Sandton Collection – Available Across All Gauteng Branches"
+ * A non-empty term description (shortcodes stripped) overrides this.
+ */
+function sa_vf_location_subtitle( $term ) {
+    if ( ! $term || is_wp_error( $term ) ) return '';
+
+    $custom = strip_shortcodes( term_description( $term->term_id, 'product_cat' ) );
+    $custom = trim( wp_strip_all_tags( $custom ) );
+    if ( $custom !== '' ) return $custom;
+
+    $children = get_terms( [
+        'taxonomy'   => 'product_cat',
+        'parent'     => $term->term_id,
+        'hide_empty' => true,
+        'orderby'    => 'name',
+        'order'      => 'ASC',
+    ] );
+    $child_names = ( ! is_wp_error( $children ) ) ? wp_list_pluck( $children, 'name' ) : [];
+
+    if ( $child_names ) {
+        return sprintf( 'Explore Our %s Vehicle Listings: %s', $term->name, sa_vf_human_join( $child_names ) );
+    }
+
+    $anc      = get_ancestors( $term->term_id, 'product_cat', 'taxonomy' );
+    $province = $anc ? get_term( end( $anc ), 'product_cat' ) : null;
+    if ( $province && ! is_wp_error( $province ) ) {
+        return sprintf( 'Browse Our %s Collection – Available Across All %s Branches', $term->name, $province->name );
+    }
+    return sprintf( 'Browse Our %s Collection', $term->name );
+}
 
 /* ===========================================================================
  * Full listings page composition (shared by the main page shortcode and the
@@ -820,22 +884,27 @@ add_shortcode( 'sa_breadcrumbs', function () {
  * ======================================================================== */
 
 /**
- * Render a complete listings block: featured slider → title + breadcrumb row →
- * optional intro → disclaimer → the filter itself.
+ * Render a complete listings block: featured slider → header (title, optional
+ * subtitle, breadcrumb) → disclaimer → the filter itself.
  *
- * @param int    $cat_id product_cat term to scope everything to (0 = whole site)
- * @param string $title  H1 text ('' to omit)
- * @param array  $show   toggles: featured, breadcrumbs, disclaimer, intro
+ * When $subtitle is set the header stacks (title / subtitle / breadcrumb),
+ * matching the location category pages; otherwise the breadcrumb sits to the
+ * far right of the title (main listings page).
+ *
+ * @param int    $cat_id   product_cat term to scope everything to (0 = whole site)
+ * @param string $title    H1 text ('' to omit)
+ * @param string $subtitle descriptive line under the title ('' to omit)
+ * @param array  $show     toggles: featured, breadcrumbs, disclaimer
  */
-function sa_vf_render_listings( $cat_id = 0, $title = '', $show = [] ) {
+function sa_vf_render_listings( $cat_id = 0, $title = '', $subtitle = '', $show = [] ) {
     $show = array_merge( [
         'featured'    => true,
         'breadcrumbs' => true,
         'disclaimer'  => true,
-        'intro'       => false,
     ], $show );
 
-    $cat_id = (int) $cat_id;
+    $cat_id   = (int) $cat_id;
+    $stacked  = ( $subtitle !== '' );
 
     ob_start();
     echo '<div class="sa-vf-archive">';
@@ -844,21 +913,17 @@ function sa_vf_render_listings( $cat_id = 0, $title = '', $show = [] ) {
         echo sa_vf_render_featured( $cat_id, 8, 'Featured Listings' ); // phpcs:ignore WordPress.Security.EscapeOutput
     }
 
-    echo '<div class="sa-vf-archive__head">';
+    echo '<div class="sa-vf-archive__head' . ( $stacked ? ' sa-vf-archive__head--stacked' : '' ) . '">';
     if ( $title !== '' ) {
         echo '<h1 class="sa-vf-archive__title">' . esc_html( $title ) . '</h1>';
+    }
+    if ( $subtitle !== '' ) {
+        echo '<p class="sa-vf-archive__subtitle">' . wp_kses_post( $subtitle ) . '</p>';
     }
     if ( $show['breadcrumbs'] ) {
         echo do_shortcode( '[sa_breadcrumbs]' );
     }
     echo '</div>';
-
-    if ( $show['intro'] && $cat_id ) {
-        $desc = strip_shortcodes( term_description( $cat_id, 'product_cat' ) );
-        if ( trim( wp_strip_all_tags( $desc ) ) !== '' ) {
-            echo '<div class="sa-vf-archive__desc">' . wp_kses_post( $desc ) . '</div>';
-        }
-    }
 
     if ( $show['disclaimer'] ) {
         echo do_shortcode( '[sa_listings_disclaimer]' );
@@ -873,6 +938,7 @@ function sa_vf_render_listings( $cat_id = 0, $title = '', $show = [] ) {
 add_shortcode( 'sa_vehicle_listings', function ( $atts ) {
     $atts = shortcode_atts( [
         'title'       => 'Vehicle Listings',
+        'subtitle'    => '',
         'category'    => '',
         'featured'    => 'yes',
         'breadcrumbs' => 'yes',
@@ -890,12 +956,26 @@ add_shortcode( 'sa_vehicle_listings', function ( $atts ) {
         }
     }
 
+    // Auto title/subtitle for a category context unless overridden.
+    $title    = $atts['title'];
+    $subtitle = $atts['subtitle'];
+    if ( $cat_id ) {
+        $term = get_term( $cat_id, 'product_cat' );
+        if ( $term && ! is_wp_error( $term ) ) {
+            if ( $title === 'Vehicle Listings' ) {
+                $title = $term->parent ? 'Vehicles - ' . $term->name : $term->name;
+            }
+            if ( $subtitle === '' ) {
+                $subtitle = sa_vf_location_subtitle( $term );
+            }
+        }
+    }
+
     $yes = function ( $v ) { return ! in_array( strtolower( (string) $v ), [ 'no', '0', 'false', '' ], true ); };
 
-    return sa_vf_render_listings( $cat_id, $atts['title'], [
+    return sa_vf_render_listings( $cat_id, $title, $subtitle, [
         'featured'    => $yes( $atts['featured'] ),
         'breadcrumbs' => $yes( $atts['breadcrumbs'] ),
         'disclaimer'  => $yes( $atts['disclaimer'] ),
-        'intro'       => (bool) $cat_id,
     ] );
 } );
