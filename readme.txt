@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.4.2
+Stable tag: 2.4.3
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,11 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.4.3 =
+Cache-busting for changed vehicle images. The client updates photos often, and reusing the same media URL let Cloudflare / browsers keep serving the previous picture even after the file was correctly replaced on the server.
+
+* **Content-addressed image filenames.** `vp_save_bytes_as_attachment()` now appends a short hash of the image bytes to the filename (e.g. `2021-renault-kwid-front-feature-photo-a1b2c3d4e5.jpg`). A changed image therefore always lands on a brand-new URL the CDN/browser has never cached, so it appears immediately with no cache purge required. Identical bytes still resolve to the same filename, so re-imports of an unchanged image never create duplicates. Existing attachments keep their current URLs; this applies to images uploaded from now on (i.e. the next time an image actually changes).
 
 = 2.4.2 =
 Follow-up to 2.4.1: fixes the underlying reason a changed feed image still would not attach, and adds an on-screen diagnostic so the cause is visible without server log access.

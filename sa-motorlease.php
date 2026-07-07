@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.4.2
+ * Version: 2.4.3
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.4.2' );
+define( 'SA_MOTORLEASE_VERSION', '2.4.3' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -610,7 +610,17 @@ function vp_save_bytes_as_attachment($bytes, $filename_base, $parent_post_id, $a
     $mime = $det['mime'];
 
     $uploads = wp_upload_dir();
-    $uniq = wp_unique_filename($uploads['path'], "{$filename_base}.{$ext}");
+
+    // Content-addressed filename: append a short hash of the image bytes so a
+    // changed image always lands on a NEW URL. The client updates vehicle photos
+    // often, and reusing the same URL lets a CDN/browser keep serving the old
+    // picture; a fingerprinted filename is a fresh URL the edge has never cached,
+    // so the new image shows immediately without any cache purge. Identical bytes
+    // always resolve to the same filename, so re-imports don't spawn duplicates.
+    $fingerprint = substr(md5($bytes), 0, 10);
+    $base        = sanitize_file_name($filename_base);
+    if ($base === '') $base = 'vehicle-image';
+    $uniq = wp_unique_filename($uploads['path'], "{$base}-{$fingerprint}.{$ext}");
 
     // Allow the common feed image types for the duration of this write. In cron
     // (no logged-in user) or on hardened installs, wp_upload_bits() rejects any
