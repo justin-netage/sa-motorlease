@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.4.0
+ * Version: 2.4.1
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.4.0' );
+define( 'SA_MOTORLEASE_VERSION', '2.4.1' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -25,7 +25,18 @@ $sa_motorlease_update_checker->getVcsApi()->enableReleaseAssets();
 
 // Custom vehicle filter — self-contained [sa_vehicle_filter] shortcode that
 // replaces the WBW / WooBeWoo Product Filter on the vehicles archive.
-require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
+//
+// Gated behind a feature flag while the 2.4.0 filter is still being finalised,
+// so a 2.4.x release (e.g. the image-sync fix) can ship without switching the
+// front-end filter, shortcodes and location-archive takeover live. Enable it
+// by defining SA_MOTORLEASE_ENABLE_VEHICLE_FILTER as true (e.g. in
+// wp-config.php), or flip the default below to true once it's ready to go live.
+if ( ! defined( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER' ) ) {
+    define( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER', false );
+}
+if ( SA_MOTORLEASE_ENABLE_VEHICLE_FILTER ) {
+    require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
+}
 
 // === CONFIG =================================================================
 
@@ -960,8 +971,15 @@ function vi_attach_prepared_images($product_id, $prepared) {
 
     delete_option($mark);
 
-    // Store combined image hash so subsequent runs can detect feed image changes
-    update_post_meta($product_id, '_vi_images_hash', vi_hash_prepared_images($prepared));
+    // Store combined image hash so subsequent runs can detect feed image changes.
+    // Only advance the hash on a clean attach (featured saved + gallery persisted);
+    // otherwise leave it stale so the sync cron retries instead of trusting a hash
+    // that doesn't match the images actually on the product.
+    if ($featured_id && $ok) {
+        update_post_meta($product_id, '_vi_images_hash', vi_hash_prepared_images($prepared));
+    } else {
+        log_import_update("Images: hash NOT advanced for product {$product_id} (featured_id={$featured_id}, gallery_ok=" . ($ok ? '1' : '0') . ") — sync cron will retry.");
+    }
 
     // Release the attach lock so sync cron can process this product now
     delete_transient("vi_attach_lock_{$product_id}");
@@ -985,16 +1003,18 @@ function vi_diff_sync_product_images($product_id, $prepared) {
 
     if (empty($fresh_images)) {
         log_import_update("Images-diff: no fresh images for product {$product_id} — skipping.");
-        return ['featured_id' => 0, 'gallery_ids' => [], 'added' => 0, 'removed' => 0, 'kept' => 0];
+        return ['featured_id' => 0, 'gallery_ids' => [], 'added' => 0, 'removed' => 0, 'kept' => 0, 'ok' => false];
     }
 
     // Collect existing attachment MD5 → attachment_id map
     $existing_md5_map = vi_collect_existing_image_md5s($product_id);
 
     // Track which existing attachments are still used
-    $keep_ids   = [];
-    $final_ids  = []; // ordered attachment IDs matching feed order
-    $added      = 0;
+    $keep_ids      = [];
+    $final_ids     = []; // ordered attachment IDs matching feed order
+    $new_ids       = []; // attachments uploaded during this run (for rollback)
+    $added         = 0;
+    $upload_failed = false;
 
     foreach ($fresh_images as $img) {
         $md5 = $img['md5'];
@@ -1010,14 +1030,38 @@ function vi_diff_sync_product_images($product_id, $prepared) {
             if ($aid) {
                 update_post_meta($aid, '_vi_image_md5', $md5);
                 $final_ids[] = $aid;
+                $new_ids[]   = $aid;
                 $added++;
                 log_import_update("Images-diff: uploaded new attach_id={$aid} (md5={$md5})");
             } else {
+                $upload_failed = true;
                 log_import_update("Images-diff: FAILED to upload image (md5={$md5})");
             }
         }
     }
 
+    // Fail safe: if any fresh image failed to upload, do NOT mutate the product.
+    // Keep the current images intact, roll back the partial uploads, and leave
+    // the stored hash untouched so the next sync tick retries the whole set.
+    // (Previously the code deleted stale images and advanced the hash even on a
+    // partial failure, leaving the product stuck on old/broken images that no
+    // later sync would re-evaluate, because the hash already claimed "current".)
+    if ($upload_failed) {
+        foreach ($new_ids as $aid) {
+            wp_delete_attachment($aid, true);
+        }
+        log_import_update("Images-diff: product {$product_id} — upload failure; kept existing images, rolled back " . count($new_ids) . " partial upload(s), hash NOT advanced (will retry next run).");
+        return [
+            'featured_id' => (int) get_post_thumbnail_id($product_id),
+            'gallery_ids' => [],
+            'added'       => 0,
+            'removed'     => 0,
+            'kept'        => count($keep_ids),
+            'ok'          => false,
+        ];
+    }
+
+    // All fresh images resolved — safe to commit.
     // Delete attachments that are no longer in the feed
     $removed = 0;
     foreach ($existing_md5_map as $md5 => $aid) {
@@ -1056,7 +1100,7 @@ function vi_diff_sync_product_images($product_id, $prepared) {
 
     $kept = count($keep_ids);
     log_import_update("Images-diff: product {$product_id} summary — kept={$kept}, added={$added}, removed={$removed}");
-    return ['featured_id' => $featured_id, 'gallery_ids' => $gallery_ids, 'added' => $added, 'removed' => $removed, 'kept' => $kept];
+    return ['featured_id' => $featured_id, 'gallery_ids' => $gallery_ids, 'added' => $added, 'removed' => $removed, 'kept' => $kept, 'ok' => true];
 }
 
 // (Optional) watchdog remains available for deeper crash tracing
@@ -1976,14 +2020,21 @@ if (!function_exists('vi_attach_prepared_images_repair')) {
             }
         }
 
-        if ($readback === $csv) {
+        $gallery_ok = ($readback === $csv);
+        if ($gallery_ok) {
             log_image_repair("product {$product_id}: gallery OK (" . count($gallery_ids) . " images; added={$added})");
         } else {
             log_image_repair("product {$product_id}: gallery PERSIST FAILED (expected='{$csv}' read='{$readback}')");
         }
 
-        // Store combined image hash so import pass can detect future feed image changes
-        update_post_meta($product_id, '_vi_images_hash', vi_hash_prepared_images($prepared));
+        // Store combined image hash so import pass can detect future feed image
+        // changes — but only when the gallery actually persisted, so a failed
+        // write doesn't leave a hash that outruns the real images on the product.
+        if ($gallery_ok) {
+            update_post_meta($product_id, '_vi_images_hash', vi_hash_prepared_images($prepared));
+        } else {
+            log_image_repair("product {$product_id}: hash NOT advanced (gallery persist failed) — will retry.");
+        }
 
         return ['featured_id' => (int) $featured_id, 'gallery_ids' => $gallery_ids];
     }
@@ -2354,7 +2405,7 @@ add_action('init', function () {
  * @param bool        $dry_run      When true, report what would change but make no writes.
  * @return array      Summary counts.
  */
-function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = null, $dry_run = false, $max_seconds = 0) {
+function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = null, $dry_run = false, $max_seconds = 0, $force = false) {
     @set_time_limit(0);
     @ini_set('memory_limit', '512M');
     global $image_labels;
@@ -2362,7 +2413,7 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
     $t0   = microtime(true);
     $mode = $dry_run ? 'DRY-RUN' : 'LIVE';
     $limit_display = $limit > 0 ? $limit : 'ALL';
-    log_image_repair("=== Image Sync START [{$mode}] (limit={$limit_display}, offset={$offset}" . ($specific_sku ? ", sku={$specific_sku}" : '') . ($max_seconds > 0 ? ", max_seconds={$max_seconds}" : '') . ') ===');
+    log_image_repair("=== Image Sync START [{$mode}] (limit={$limit_display}, offset={$offset}" . ($specific_sku ? ", sku={$specific_sku}" : '') . ($max_seconds > 0 ? ", max_seconds={$max_seconds}" : '') . ($force ? ', force=1' : '') . ') ===');
 
     $args = [
         'post_type'      => 'product',
@@ -2422,6 +2473,22 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
         }
 
         $fresh_hash = vi_hash_prepared_images($fresh_prepared);
+
+        // Force mode: bypass the hash short-circuit entirely and re-diff the
+        // product against the feed. Use this to repair products whose stored
+        // hash wrongly claims "current" (e.g. after a past partial-upload run).
+        if ($force) {
+            if ($dry_run) {
+                log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] force re-sync requested — would re-sync bypassing hash (stored={$stored_hash})");
+            } else {
+                log_image_repair("product {$pid} (sku={$sku}): force re-sync — bypassing stored hash (stored={$stored_hash}, fresh={$fresh_hash})");
+                set_transient( "vi_attach_lock_{$pid}", time(), 120 );
+                vi_diff_sync_product_images($pid, $fresh_prepared);
+                delete_transient( "vi_attach_lock_{$pid}" );
+            }
+            $updated++;
+            continue;
+        }
 
         if ($stored_hash === '') {
             // No stored hash yet — compare feed images against currently-attached
@@ -2487,9 +2554,12 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
 }
 
 // === URL trigger: progress page for bulk image sync =========================
-// ?vi_sync_images=1           - live sync (progress page)
-// ?vi_sync_images=1&dry_run=1 - dry run (progress page, no writes)
-// ?vi_sync_images=1&sku=ABC   - single SKU
+// ?vi_sync_images=1                  - live sync (progress page)
+// ?vi_sync_images=1&dry_run=1        - dry run (progress page, no writes)
+// ?vi_sync_images=1&sku=ABC          - single SKU
+// ?vi_sync_images=1&sku=ABC&force=1  - re-sync SKU ignoring the stored hash
+//                                      (repairs a product whose hash wrongly
+//                                       claims "current" after a partial run)
 add_action('init', function () {
     if (!isset($_GET['vi_sync_images'])) return;
 
@@ -2502,6 +2572,7 @@ add_action('init', function () {
     }
 
     $dry_run = !empty($_GET['dry_run']);
+    $force   = !empty($_GET['force']);
     $sku     = isset($_GET['sku']) ? sanitize_text_field($_GET['sku']) : null;
 
     // Total product count for progress bar
@@ -2511,11 +2582,12 @@ add_action('init', function () {
              + (int)($counts->private ?? 0);
     if ($sku) $total = 1;
 
-    $mode_label  = $dry_run ? 'DRY RUN'  : 'LIVE';
-    $mode_color  = $dry_run ? '#d29922'  : '#238636';
+    $mode_label  = ($dry_run ? 'DRY RUN'  : 'LIVE') . ($force ? ' · FORCE' : '');
+    $mode_color  = $dry_run ? '#d29922'  : ($force ? '#8957e5' : '#238636');
     $sku_js      = $sku ? json_encode($sku) : 'null';
     $total_js    = (int)$total;
     $dry_run_js  = $dry_run ? 'true' : 'false';
+    $force_js    = $force ? 'true' : 'false';
 
     header('Content-Type: text/html; charset=utf-8');
     // Prevent nginx/Apache from buffering the full page before sending
@@ -2565,6 +2637,7 @@ h1{font-size:18px;color:#f0f6fc;margin-bottom:16px;display:flex;align-items:cent
 <script>
 const TOTAL   = <?= $total_js ?>;
 const DRY_RUN = <?= $dry_run_js ?>;
+const FORCE   = <?= $force_js ?>;
 const SKU     = <?= $sku_js ?>;
 const NONCE   = <?= wp_json_encode(wp_create_nonce('sa_motorlease_admin_action')) ?>;
 const BATCH   = 20;
@@ -2593,6 +2666,7 @@ async function runBatch() {
     batch++;
     const p = new URLSearchParams({vi_sync_batch:1, offset, limit:BATCH});
     if (DRY_RUN) p.set('dry_run', 1);
+    if (FORCE)   p.set('force', 1);
     if (SKU)     p.set('sku', SKU);
     if (NONCE)   p.set('_wpnonce', NONCE);
 
@@ -2664,8 +2738,9 @@ add_action('init', function () {
     $offset  = isset($_GET['offset']) ? max(0, (int)$_GET['offset'])         : 0;
     $sku     = isset($_GET['sku'])    ? sanitize_text_field($_GET['sku'])     : null;
     $dry_run = !empty($_GET['dry_run']);
+    $force   = !empty($_GET['force']);
 
-    $result = vi_bulk_sync_vehicle_images($limit, $offset, $sku, $dry_run, 25);
+    $result = vi_bulk_sync_vehicle_images($limit, $offset, $sku, $dry_run, 25, $force);
 
     // done = reached end of catalogue (got fewer results than a full batch)
     // AND no time-guard interruption (processed everything we fetched)
