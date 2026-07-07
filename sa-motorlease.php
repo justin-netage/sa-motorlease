@@ -25,7 +25,18 @@ $sa_motorlease_update_checker->getVcsApi()->enableReleaseAssets();
 
 // Custom vehicle filter — self-contained [sa_vehicle_filter] shortcode that
 // replaces the WBW / WooBeWoo Product Filter on the vehicles archive.
-require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
+//
+// Gated behind a feature flag while the 2.4.0 filter is still being finalised,
+// so a 2.4.x release (e.g. the image-sync fix) can ship without switching the
+// front-end filter, shortcodes and location-archive takeover live. Enable it
+// by defining SA_MOTORLEASE_ENABLE_VEHICLE_FILTER as true (e.g. in
+// wp-config.php), or flip the default below to true once it's ready to go live.
+if ( ! defined( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER' ) ) {
+    define( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER', false );
+}
+if ( SA_MOTORLEASE_ENABLE_VEHICLE_FILTER ) {
+    require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
+}
 
 // === CONFIG =================================================================
 
