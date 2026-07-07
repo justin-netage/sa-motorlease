@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.4.0
+Stable tag: 2.4.1
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,13 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.4.1 =
+Bugfix release: fixes vehicle images that changed in the PACE feed but never updated on the site, and could not be repaired by re-running the image sync.
+
+* **Fail-safe image diff sync.** `vi_diff_sync_product_images()` used to delete the old attachments and advance the stored `_vi_images_hash` even when uploading the new feed images failed (a transient upload/DB/disk error makes `vp_save_bytes_as_attachment()` return `0`). That left the product on old/broken images while the hash claimed "current", so every cron tick and every manual `?vi_sync_images=1` run reported "unchanged" and the product could never self-heal. The diff sync now aborts on any upload failure: it keeps the product's current images, rolls back the partial uploads, and leaves the hash untouched so the next tick retries the whole set.
+* **Hash guarded in the create/repair paths too.** The import-attach and image-repair passes only advance `_vi_images_hash` once the featured image and gallery meta have actually persisted, so a failed write no longer poisons the hash.
+* **`force` re-sync flag.** `?vi_sync_images=1&sku=ABC&force=1` (and the batch endpoint's `force=1`) bypasses the stored-hash short-circuit and re-diffs the product against the live feed — the recovery path for any product already stuck with a hash that wrongly claims "current".
 
 = 2.4.0 =
 New feature: a self-contained custom vehicle filter that replaces the third-party WBW / WooBeWoo Product Filter on the vehicles listing, with richer filtering than the plugin it supersedes. The existing WBW reindex/cleanup integration is left in place so the two can run side by side while the site is switched over.
