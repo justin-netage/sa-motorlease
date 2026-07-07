@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.4.1
+Stable tag: 2.4.2
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,13 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.4.2 =
+Follow-up to 2.4.1: fixes the underlying reason a changed feed image still would not attach, and adds an on-screen diagnostic so the cause is visible without server log access.
+
+* **Uploader accepts WebP (and the common image types) in cron.** `vp_save_bytes_as_attachment()` now applies a scoped `upload_mimes` allowance around `wp_upload_bits()`. On a hardened install — or in WP-Cron, where there is no logged-in user — WordPress otherwise rejects any extension not in `get_allowed_mime_types()` (notably WebP) with "Sorry, this file type is not permitted", which failed the upload and, under 2.4.1's fail-safe, left the product on its old image. The upload-failure log line now also records the filename and mime.
+* **Truthful sync counts.** The bulk sync now uses the diff result's `ok` flag: a run that rolled back (upload failure) is reported as **Failed**, not **Updated**. The progress page gained a red "Failed" tile so a silent rollback is obvious instead of showing a misleading "1 updated".
+* **Read-only diagnostic endpoint.** `?vi_diag_images=1&sku=ABC` renders, without changing anything: the product(s) for that SKU, each current attachment (stored `_vi_image_md5` meta vs the real md5 of the file on disk, whether the file exists, and whether it is still in the feed), every feed image with its detected type and md5, the keep/upload decision the sync would make, and a live upload test — both as the site is configured now and with the 2.4.2 mime allowance — so a blocked file type or a stale hash is immediately visible.
 
 = 2.4.1 =
 Bugfix release: fixes vehicle images that changed in the PACE feed but never updated on the site, and could not be repaired by re-running the image sync.

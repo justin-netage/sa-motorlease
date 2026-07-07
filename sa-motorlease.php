@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.4.1
+ * Version: 2.4.2
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.4.1' );
+define( 'SA_MOTORLEASE_VERSION', '2.4.2' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -611,9 +611,25 @@ function vp_save_bytes_as_attachment($bytes, $filename_base, $parent_post_id, $a
 
     $uploads = wp_upload_dir();
     $uniq = wp_unique_filename($uploads['path'], "{$filename_base}.{$ext}");
+
+    // Allow the common feed image types for the duration of this write. In cron
+    // (no logged-in user) or on hardened installs, wp_upload_bits() rejects any
+    // extension not in get_allowed_mime_types() — notably WebP — with "Sorry,
+    // this file type is not permitted", which would otherwise fail the sync and
+    // leave the product on its old images.
+    $allow_image_mimes = function ($mimes) {
+        $mimes['jpg|jpeg|jpe'] = 'image/jpeg';
+        $mimes['png']          = 'image/png';
+        $mimes['gif']          = 'image/gif';
+        $mimes['webp']         = 'image/webp';
+        return $mimes;
+    };
+    add_filter('upload_mimes', $allow_image_mimes);
     $upload = wp_upload_bits($uniq, null, $bytes);
+    remove_filter('upload_mimes', $allow_image_mimes);
+
     if (!empty($upload['error'])) {
-        log_import_update('Image upload failed: ' . $upload['error']);
+        log_import_update("Image upload failed for '{$uniq}' (mime={$mime}): " . $upload['error']);
         return 0;
     }
 
@@ -2437,6 +2453,7 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
     $unchanged      = 0;
     $no_feed        = 0;
     $skipped_no_sku = 0;
+    $failed         = 0;
     $processed      = 0;
 
     log_image_repair("Found {$total_scanned} products to scan");
@@ -2480,13 +2497,19 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
         if ($force) {
             if ($dry_run) {
                 log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] force re-sync requested — would re-sync bypassing hash (stored={$stored_hash})");
+                $updated++;
             } else {
                 log_image_repair("product {$pid} (sku={$sku}): force re-sync — bypassing stored hash (stored={$stored_hash}, fresh={$fresh_hash})");
                 set_transient( "vi_attach_lock_{$pid}", time(), 120 );
-                vi_diff_sync_product_images($pid, $fresh_prepared);
+                $res = vi_diff_sync_product_images($pid, $fresh_prepared);
                 delete_transient( "vi_attach_lock_{$pid}" );
+                if (!empty($res['ok'])) {
+                    $updated++;
+                } else {
+                    log_image_repair("product {$pid} (sku={$sku}): force re-sync did NOT commit (upload failure/rollback) — images left unchanged");
+                    $failed++;
+                }
             }
-            $updated++;
             continue;
         }
 
@@ -2511,13 +2534,14 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
             } else {
                 if ($dry_run) {
                     log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] images differ from feed — would update");
+                    $updated++;
                 } else {
                     log_image_repair("product {$pid} (sku={$sku}): images differ from feed — syncing per-image");
                     set_transient( "vi_attach_lock_{$pid}", time(), 120 );
-                    vi_diff_sync_product_images($pid, $fresh_prepared);
+                    $res = vi_diff_sync_product_images($pid, $fresh_prepared);
                     delete_transient( "vi_attach_lock_{$pid}" );
+                    if (!empty($res['ok'])) { $updated++; } else { $failed++; }
                 }
-                $updated++;
             }
             continue;
         }
@@ -2531,16 +2555,17 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
         // Hash mismatch — images have changed in the feed
         if ($dry_run) {
             log_image_repair("product {$pid} (sku={$sku}): [DRY-RUN] images CHANGED (old={$stored_hash} new={$fresh_hash}) — no changes made");
+            $updated++;
         } else {
             log_image_repair("product {$pid} (sku={$sku}): images CHANGED (old={$stored_hash} new={$fresh_hash}) — syncing per-image");
             set_transient( "vi_attach_lock_{$pid}", time(), 120 );
-            vi_diff_sync_product_images($pid, $fresh_prepared);
+            $res = vi_diff_sync_product_images($pid, $fresh_prepared);
             delete_transient( "vi_attach_lock_{$pid}" );
+            if (!empty($res['ok'])) { $updated++; } else { $failed++; }
         }
-        $updated++;
     }
 
-    log_image_repair("=== Image Sync END [{$mode}] — scanned={$total_scanned}, processed={$processed}, updated={$updated}, unchanged={$unchanged}, no_feed={$no_feed}, no_sku={$skipped_no_sku} ===");
+    log_image_repair("=== Image Sync END [{$mode}] — scanned={$total_scanned}, processed={$processed}, updated={$updated}, unchanged={$unchanged}, no_feed={$no_feed}, no_sku={$skipped_no_sku}, failed={$failed} ===");
 
     return [
         'mode'           => $mode,
@@ -2550,6 +2575,7 @@ function vi_bulk_sync_vehicle_images($limit = 200, $offset = 0, $specific_sku = 
         'unchanged'      => $unchanged,
         'no_feed'        => $no_feed,
         'skipped_no_sku' => $skipped_no_sku,
+        'failed'         => $failed,
     ];
 }
 
@@ -2613,6 +2639,7 @@ h1{font-size:18px;color:#f0f6fc;margin-bottom:16px;display:flex;align-items:cent
 .stat-value{font-size:26px;font-weight:700;color:#f0f6fc;margin-top:2px}
 .has-value{color:#3fb950 !important}
 .has-value.warn{color:#d29922 !important}
+.has-value.err{color:#f85149 !important}
 #log{background:#010409;border:1px solid #30363d;border-radius:6px;height:380px;overflow-y:auto;padding:12px;font-size:12px;line-height:1.7}
 .lb{color:#444;border-top:1px solid #21262d;padding-top:3px;margin-top:3px}
 .lb:first-child{border-top:none}
@@ -2630,6 +2657,7 @@ h1{font-size:18px;color:#f0f6fc;margin-bottom:16px;display:flex;align-items:cent
 <div class="stats">
   <div class="stat"><div class="stat-label">Updated</div><div class="stat-value" id="s-updated">0</div></div>
   <div class="stat"><div class="stat-label">Unchanged</div><div class="stat-value" id="s-unchanged">0</div></div>
+  <div class="stat"><div class="stat-label">Failed</div><div class="stat-value" id="s-failed">0</div></div>
   <div class="stat"><div class="stat-label">No Feed</div><div class="stat-value" id="s-no_feed">0</div></div>
   <div class="stat"><div class="stat-label">No SKU</div><div class="stat-value" id="s-skipped_no_sku">0</div></div>
 </div>
@@ -2643,7 +2671,7 @@ const NONCE   = <?= wp_json_encode(wp_create_nonce('sa_motorlease_admin_action')
 const BATCH   = 20;
 
 let offset = 0, batch = 0;
-const counts = {updated:0,unchanged:0,no_feed:0,skipped_no_sku:0};
+const counts = {updated:0,unchanged:0,failed:0,no_feed:0,skipped_no_sku:0};
 
 const log = document.getElementById('log');
 function addLog(html, cls) {
@@ -2660,6 +2688,7 @@ function bump(key, n) {
     el.textContent = counts[key];
     el.classList.add('has-value');
     if (key === 'no_feed' || key === 'skipped_no_sku') el.classList.add('warn');
+    if (key === 'failed') el.classList.add('err');
 }
 
 async function runBatch() {
@@ -2691,6 +2720,7 @@ async function runBatch() {
     const parts = [];
     if (data.updated)   parts.push('<span class="lc">' + data.updated + ' updated</span>');
     if (data.unchanged) parts.push(data.unchanged + ' unchanged');
+    if (data.failed)    parts.push('<span class="le">' + data.failed + ' failed</span>');
     if (data.no_feed)   parts.push(data.no_feed + ' no feed');
     addLog('Batch ' + batch + ' (offset ' + offset + '): ' +
         (parts.length ? parts.join(', ') : 'nothing to do'));
@@ -2852,6 +2882,205 @@ button:hover{background:#2ea043}
 <?php endif; ?>
 </body></html>
 <?php
+    exit;
+}, 20);
+
+// === URL trigger: image-sync DIAGNOSTIC (read-only) =========================
+// ?vi_diag_images=1&sku=ABC — show exactly what the sync sees for one SKU with
+// no changes to the product: the matched product(s), each current attachment
+// (with its stored _vi_image_md5 meta vs the real md5 of the file on disk, so a
+// stale/mismatched hash is obvious), the feed images and their md5s, the
+// keep/upload decision per feed image, the stored vs fresh image hash, and a
+// LIVE upload test (via wp_upload_bits, then deleted) that surfaces exactly why
+// an upload would be rejected (e.g. a blocked file type). Same admin nonce as
+// the other tools.
+add_action('init', function () {
+    if (!isset($_GET['vi_diag_images'])) return;
+
+    if (!is_user_logged_in() || !current_user_can('manage_options')) {
+        status_header(403);
+        exit('Forbidden - admin access required');
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
+
+    global $image_labels;
+    $sku   = isset($_GET['sku']) ? sanitize_text_field($_GET['sku']) : '';
+    $nonce = sanitize_text_field($_GET['_wpnonce']);
+
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Accel-Buffering: no');
+    ?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Image Sync Diagnostic</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Courier New',monospace;background:#0d1117;color:#c9d1d9;padding:24px;font-size:13px}
+h1{font-size:18px;color:#f0f6fc;margin-bottom:16px}
+h2{font-size:14px;color:#f0f6fc;margin:22px 0 8px;border-bottom:1px solid #21262d;padding-bottom:4px}
+form{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:16px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+input[type=text]{background:#010409;border:1px solid #30363d;border-radius:6px;color:#c9d1d9;padding:8px 10px;font-family:inherit;font-size:14px;min-width:240px}
+button{background:#238636;color:#0d1117;border:0;border-radius:6px;padding:8px 16px;font-family:inherit;font-size:13px;font-weight:700;cursor:pointer}
+table{border-collapse:collapse;width:100%;margin:6px 0 14px;font-size:12px}
+th,td{border:1px solid #21262d;padding:6px 8px;text-align:left;vertical-align:top;word-break:break-word}
+th{background:#161b22;color:#8b949e;text-transform:uppercase;font-size:10px;letter-spacing:.5px}
+code{color:#58a6ff}
+.good{color:#3fb950;font-weight:700}
+.bad{color:#f85149;font-weight:700}
+.warn{color:#d29922;font-weight:700}
+.muted{color:#8b949e}
+.wrap{overflow-x:auto}
+</style>
+</head>
+<body>
+<h1>Image Sync Diagnostic <span class="muted">(read-only)</span></h1>
+<form method="get" action="">
+    <input type="hidden" name="vi_diag_images" value="1">
+    <input type="hidden" name="_wpnonce" value="<?= esc_attr($nonce) ?>">
+    <input type="text" name="sku" value="<?= esc_attr($sku) ?>" placeholder="SKU / vehicle_id" autofocus>
+    <button type="submit">Diagnose</button>
+</form>
+<?php
+    if ($sku === '') {
+        echo '<p class="muted">Enter a SKU to see exactly what the image sync would do — no changes are made.</p></body></html>';
+        exit;
+    }
+
+    $ids = get_posts([
+        'post_type'      => 'product',
+        'post_status'    => ['publish', 'draft', 'private', 'pending'],
+        'meta_query'     => [['key' => '_sku', 'value' => $sku]],
+        'fields'         => 'ids',
+        'posts_per_page' => -1,
+        'orderby'        => 'ID',
+        'order'          => 'ASC',
+    ]);
+
+    echo '<h2>Product match for _sku=' . esc_html($sku) . '</h2>';
+    if (empty($ids)) {
+        echo '<p class="bad">No product found with this SKU.</p></body></html>';
+        exit;
+    }
+    echo '<p>' . count($ids) . ' product(s): ';
+    echo implode(', ', array_map(fn($i) => '<code>#' . (int)$i . '</code>', $ids));
+    echo ($ids && count($ids) === 1) ? '</p>' : ' <span class="warn">— a single-SKU sync only processes the lowest ID (#' . (int)$ids[0] . ').</span></p>';
+
+    // Fetch feed once (same call the sync uses)
+    $prepared   = vi_collect_usable_images($sku, '', $image_labels);
+    $feed_imgs  = array_merge($prepared['featured'], $prepared['gallery']);
+    $fresh_hash = vi_hash_prepared_images($prepared);
+
+    foreach ($ids as $pid) {
+        $pid   = (int) $pid;
+        $thumb = (int) get_post_thumbnail_id($pid);
+        $stored_hash = (string) get_post_meta($pid, '_vi_images_hash', true);
+
+        echo '<h2>Product #' . $pid . ' — ' . esc_html(get_the_title($pid)) . '</h2>';
+        echo '<p>Featured <code>_thumbnail_id</code> = <code>' . ($thumb ?: '(none)') . '</code>'
+           . ' · stored hash = <code>' . esc_html($stored_hash ?: '(empty)') . '</code>'
+           . ' · fresh hash = <code>' . esc_html($fresh_hash) . '</code> '
+           . ($fresh_hash === $stored_hash
+                ? '<span class="warn">(match — a normal, non-force sync SKIPS this product)</span>'
+                : '<span class="good">(differ — a normal sync would run)</span>')
+           . '</p>';
+
+        // Current attachments
+        $att_ids = [];
+        if ($thumb) $att_ids[] = $thumb;
+        $csv = (string) get_post_meta($pid, '_product_image_gallery', true);
+        foreach (array_filter(array_map('intval', explode(',', $csv))) as $g) {
+            if (!in_array($g, $att_ids, true)) $att_ids[] = $g;
+        }
+
+        // Build feed md5 set for cross-referencing
+        $feed_md5s = [];
+        foreach ($feed_imgs as $fi) $feed_md5s[md5($fi['bytes'])] = true;
+
+        echo '<div class="wrap"><table>';
+        echo '<tr><th>Attachment</th><th>Role</th><th>File on disk</th><th>_vi_image_md5 (meta)</th><th>Real md5 (file)</th><th>Meta vs file</th><th>In feed?</th></tr>';
+        if (empty($att_ids)) {
+            echo '<tr><td colspan="7" class="muted">No attachments on this product.</td></tr>';
+        }
+        foreach ($att_ids as $aid) {
+            $path     = get_attached_file($aid);
+            $exists   = $path && file_exists($path);
+            $meta_md5 = (string) get_post_meta($aid, '_vi_image_md5', true);
+            $real_md5 = $exists ? md5((string) @file_get_contents($path)) : '';
+            $role     = ($aid === $thumb) ? 'featured' : 'gallery';
+            $mvf      = ($meta_md5 === '') ? '<span class="muted">no meta</span>'
+                       : ($real_md5 === '' ? '<span class="bad">file missing</span>'
+                       : ($meta_md5 === $real_md5 ? '<span class="good">ok</span>' : '<span class="bad">META ≠ FILE</span>'));
+            $in_feed  = ($real_md5 !== '' && isset($feed_md5s[$real_md5])) ? '<span class="good">yes</span>'
+                       : ($real_md5 === '' ? '<span class="muted">—</span>' : '<span class="warn">no (would be removed)</span>');
+            echo '<tr>'
+               . '<td><code>#' . (int)$aid . '</code></td>'
+               . '<td>' . $role . '</td>'
+               . '<td>' . ($exists ? '<span class="good">present</span>' : '<span class="bad">MISSING</span>') . '</td>'
+               . '<td><code>' . esc_html($meta_md5 ?: '—') . '</code></td>'
+               . '<td><code>' . esc_html($real_md5 ?: '—') . '</code></td>'
+               . '<td>' . $mvf . '</td>'
+               . '<td>' . $in_feed . '</td>'
+               . '</tr>';
+        }
+        echo '</table></div>';
+
+        // Feed images + decision + live upload test
+        $existing_map = vi_collect_existing_image_md5s($pid); // md5 => aid
+        echo '<div class="wrap"><table>';
+        echo '<tr><th>#</th><th>Feed key</th><th>Role</th><th>Bytes</th><th>Detected type</th><th>md5</th><th>Sync decision</th><th>Live upload test</th></tr>';
+        if (empty($feed_imgs)) {
+            echo '<tr><td colspan="8" class="bad">Feed returned NO usable images for this SKU — the sync skips (no_feed).</td></tr>';
+        }
+        $n = 0;
+        foreach ($feed_imgs as $img) {
+            $n++;
+            $md5 = md5($img['bytes']);
+            $det = vp_guess_image_ext_from_bytes($img['bytes']);
+            $role = ($n === 1) ? 'featured' : 'gallery';
+            $decision = isset($existing_map[$md5])
+                ? '<span class="good">KEEP existing #' . (int)$existing_map[$md5] . '</span>'
+                : '<span class="warn">UPLOAD new</span>';
+
+            // Live upload test — reproduces the real wp_upload_bits() path, then cleans up.
+            $testname = 'vi-diag-' . substr($md5, 0, 10) . '.' . $det['ext'];
+            $ft = wp_check_filetype($testname);
+            $allow = function ($m) { $m['jpg|jpeg|jpe']='image/jpeg'; $m['png']='image/png'; $m['gif']='image/gif'; $m['webp']='image/webp'; return $m; };
+
+            // (a) as the site is configured right now
+            $raw = wp_upload_bits($testname, null, $img['bytes']);
+            $raw_ok = empty($raw['error']);
+            if ($raw_ok && !empty($raw['file'])) @unlink($raw['file']);
+
+            // (b) with the 2.4.x image-mime allowance applied (what the fixed uploader does)
+            add_filter('upload_mimes', $allow);
+            $fixed = wp_upload_bits('vi-diag2-' . substr($md5, 0, 10) . '.' . $det['ext'], null, $img['bytes']);
+            remove_filter('upload_mimes', $allow);
+            $fixed_ok = empty($fixed['error']);
+            if ($fixed_ok && !empty($fixed['file'])) @unlink($fixed['file']);
+
+            $uptest  = 'allowed-type: ' . (empty($ft['type']) ? '<span class="bad">NO (.' . esc_html($det['ext']) . ' blocked)</span>' : '<span class="good">yes</span>') . '<br>';
+            $uptest .= 'current config: ' . ($raw_ok ? '<span class="good">OK</span>' : '<span class="bad">FAIL — ' . esc_html($raw['error']) . '</span>') . '<br>';
+            $uptest .= 'with mime fix: ' . ($fixed_ok ? '<span class="good">OK</span>' : '<span class="bad">FAIL — ' . esc_html($fixed['error']) . '</span>');
+
+            echo '<tr>'
+               . '<td>' . $n . '</td>'
+               . '<td>' . esc_html($img['key']) . '</td>'
+               . '<td>' . $role . '</td>'
+               . '<td>' . number_format(strlen($img['bytes'])) . '</td>'
+               . '<td>' . esc_html($det['mime']) . ' / .' . esc_html($det['ext']) . '</td>'
+               . '<td><code>' . esc_html(substr($md5, 0, 12)) . '…</code></td>'
+               . '<td>' . $decision . '</td>'
+               . '<td>' . $uptest . '</td>'
+               . '</tr>';
+        }
+        echo '</table></div>';
+    }
+
+    echo '</body></html>';
     exit;
 }, 20);
 
