@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.5.3
+Stable tag: 2.6.0
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,12 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.0 =
+Makes the vehicle filter instant on any host by moving filtering into the browser.
+
+* **Client-side filtering.** The whole published catalogue (each vehicle's price, sold status, mileage, year, facet slugs, category tree and pre-rendered card HTML) is shipped to the browser once with the page. Changing a filter, sort or page now happens entirely in JavaScript with **no `admin-ajax.php` round-trip** — so it's instant even on sites where WordPress takes a couple of seconds to bootstrap each request (which diagnostics showed was the real cause of the multi-second waits, not the filter's own query). The first page is still server-rendered for SEO and the no-JS fallback, and shareable filter URLs still work.
+* **Dataset cache.** That browser dataset is built once, stored compressed alongside the index, versioned the same way, and re-warmed after each import — so it always matches current stock without a per-request rebuild.
 
 = 2.5.3 =
 Adds timing instrumentation to pinpoint slow filter responses.

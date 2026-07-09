@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.7.0' );
+    define( 'SA_VF_VERSION', '1.8.0' );
 }
 
 /**
@@ -226,14 +226,13 @@ function sa_vf_index() {
 }
 
 /**
- * Decode the cached index, or null on miss/stale. The value is stored as a
- * compressed, base64-encoded string (prefix "g:") — small enough to survive
- * object-cache value-size limits (e.g. Memcached's ~1 MB cap, which would
- * otherwise drop the index and force a rebuild on every request) and ASCII-safe
- * for the wp_options longtext column. "r:" is the uncompressed fallback.
+ * Decode a cached, compressed blob (prefix "g:" gzip+base64, "r:" raw) under
+ * $key, or null on miss/stale. Compression keeps the value small enough to
+ * survive object-cache size limits (e.g. Memcached's ~1 MB cap) and ASCII-safe
+ * for the wp_options longtext column.
  */
-function sa_vf_index_read( $ver ) {
-    $blob = get_transient( 'sa_vf_index' );
+function sa_vf_blob_read( $key, $ver ) {
+    $blob = get_transient( $key );
     if ( ! is_string( $blob ) || strlen( $blob ) < 2 ) return null;
 
     $tag  = substr( $blob, 0, 2 );
@@ -246,24 +245,73 @@ function sa_vf_index_read( $ver ) {
         return null;
     }
 
-    $data = @unserialize( $body );
+    $data = is_string( $body ) ? @unserialize( $body ) : false;
     if ( ! is_array( $data ) || ! isset( $data['ver'], $data['rows'] ) || $data['ver'] !== $ver ) {
         return null;
     }
     return $data['rows'];
 }
 
-/** Store the index, compressed when zlib is available. */
-function sa_vf_index_write( array $rows, $ver ) {
+/** Store $rows under $key, compressed when zlib is available. */
+function sa_vf_blob_write( $key, array $rows, $ver ) {
     $body = serialize( [ 'ver' => $ver, 'rows' => $rows ] );
     if ( function_exists( 'gzcompress' ) ) {
         $z = gzcompress( $body, 6 );
         if ( $z !== false ) {
-            set_transient( 'sa_vf_index', 'g:' . base64_encode( $z ), DAY_IN_SECONDS );
+            set_transient( $key, 'g:' . base64_encode( $z ), DAY_IN_SECONDS );
             return;
         }
     }
-    set_transient( 'sa_vf_index', 'r:' . $body, DAY_IN_SECONDS );
+    set_transient( $key, 'r:' . $body, DAY_IN_SECONDS );
+}
+
+// Thin wrappers so callers (and the diagnostic) read clearly.
+function sa_vf_index_read( $ver ) { return sa_vf_blob_read( 'sa_vf_index', $ver ); }
+function sa_vf_index_write( array $rows, $ver ) { sa_vf_blob_write( 'sa_vf_index', $rows, $ver ); }
+
+/**
+ * The full client-side dataset: every published vehicle with its filter fields
+ * (price, sold, km, year, facet slugs, category tree) plus its pre-rendered card
+ * HTML. Shipped to the browser once so all filtering/sorting/paging happens
+ * client-side with no admin-ajax round-trip. Cached (compressed) per index
+ * version and warmed after each import, exactly like the index itself.
+ */
+function sa_vf_client_data() {
+    static $mem = null;
+    if ( is_array( $mem ) ) return $mem;
+
+    $ver  = sa_vf_index_version();
+    $rows = sa_vf_blob_read( 'sa_vf_client', $ver );
+    if ( $rows === null ) {
+        $rows = [];
+        foreach ( sa_vf_index() as $r ) {
+            $rows[] = [
+                'id'    => $r['id'],
+                'price' => $r['price'],           // number|null
+                'sold'  => $r['sold'] ? 1 : 0,
+                'km'    => $r['km'],               // number|null
+                'year'  => $r['year'],             // number|null
+                'f'     => (object) $r['facets'],  // { facetKey: [slugs] }
+                'c'     => $r['cats'],             // [ term ids, incl. ancestors ]
+                'h'     => sa_vf_render_card( $r['id'] ),
+            ];
+        }
+        sa_vf_blob_write( 'sa_vf_client', $rows, $ver );
+    }
+    return $mem = $rows;
+}
+
+/** Price/km bucket list flattened for JS (open-ended max sent as null = ∞). */
+function sa_vf_buckets_for_js( array $buckets ) {
+    $out = [];
+    foreach ( $buckets as $b ) {
+        $out[] = [
+            'key' => $b['key'],
+            'min' => $b['min'],
+            'max' => $b['max'] >= PHP_INT_MAX ? null : $b['max'],
+        ];
+    }
+    return $out;
 }
 
 /** The index keyed by product id, for O(1) lookups during sort/render. */
@@ -392,10 +440,12 @@ function sa_vf_km_bucket_by_key( $key ) {
 function sa_vf_flush_caches() {
     sa_vf_bump_index_version();
     delete_transient( 'sa_vf_index' );
+    delete_transient( 'sa_vf_client' );
     // Drop legacy caches from earlier versions of this file.
     delete_transient( 'sa_vf_price_bounds' );
     delete_transient( 'sa_vf_make_model_map' );
-    sa_vf_index(); // warm at the new version
+    sa_vf_index();       // warm the index
+    sa_vf_client_data(); // warm the client dataset
 }
 // Piggyback on the importer's reindex signal so the catalogue stays fresh.
 add_action( 'wbw_custom_index_cron', 'sa_vf_flush_caches' );
@@ -989,13 +1039,21 @@ function sa_vf_shortcode( $atts ) {
     // archives (scoped to the current province) instead of filtering.
     $region_nav = $initial['category'] ? sa_vf_region_nav( $initial['category'] ) : null;
 
+    // Ship the whole catalogue to the browser so filtering/sorting/paging run
+    // client-side with no admin-ajax round-trip (each of which pays the full
+    // WordPress bootstrap). The first page is still server-rendered below for
+    // SEO and the no-JS fallback; JS takes over on load.
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF', [
-        'ajax_url'   => admin_url( 'admin-ajax.php' ),
-        'nonce'      => wp_create_nonce( 'sa_vf' ),
-        'available'  => $result['available'], // options still possible on load
-        'per_page'   => (int) SA_VF_PER_PAGE,
-        'sort'       => sa_vf_sort_options(),
-        'category'   => (int) $initial['category'], // keeps AJAX requests locked to the location
+        'vehicles'     => sa_vf_client_data(),
+        'perPage'      => (int) SA_VF_PER_PAGE,
+        'sort'         => sa_vf_sort_options(),
+        'priceBuckets' => sa_vf_buckets_for_js( sa_vf_price_buckets() ),
+        'kmBuckets'    => sa_vf_buckets_for_js( sa_vf_km_buckets() ),
+        'category'     => (int) $initial['category'], // location scope (province/area)
+        // Kept for any external caller / graceful fallback; the client no longer
+        // needs a round-trip for normal filtering.
+        'ajax_url'     => admin_url( 'admin-ajax.php' ),
+        'nonce'        => wp_create_nonce( 'sa_vf' ),
     ] );
 
     ob_start();
