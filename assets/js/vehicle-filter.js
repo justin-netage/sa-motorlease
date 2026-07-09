@@ -1,9 +1,14 @@
 /**
  * SA Motorlease — Custom Vehicle Filter (frontend)
  *
- * Instant AJAX filtering over the pa_* attribute facets, dependent Make→Model,
- * monthly-payment buckets, sorting, numbered pagination, shareable URL state
- * and a floating mobile filter button. No jQuery / no external deps.
+ * Client-side filtering: the whole catalogue is shipped once in window.SA_VF
+ * (each vehicle carries its filter fields + pre-rendered card HTML), so every
+ * filter/sort/page change is computed in the browser with NO server round-trip.
+ * On a site whose WordPress bootstrap is slow, this is the difference between a
+ * multi-second admin-ajax request per change and an instant one. The first page
+ * is still server-rendered for SEO / no-JS; this takes over on load.
+ * Facets, monthly-payment + mileage buckets, sorting, numbered pagination,
+ * shareable URL state, a floating mobile button. No jQuery / no external deps.
  */
 (function () {
     'use strict';
@@ -14,103 +19,181 @@
     var root = document.querySelector('.sa-vf');
     if (!root) return;
 
-    var form     = root.querySelector('.sa-vf-form');
-    var grid     = root.querySelector('.sa-vf__grid');
-    var count    = root.querySelector('.sa-vf__count');
-    var sortSel  = root.querySelector('.sa-vf__sort');
-    var pager    = root.querySelector('.sa-vf__pager');
-    var loading  = root.querySelector('.sa-vf__loading');
-    var modelSel = form.querySelector('[data-facet="model"]');
-    var makeSel  = form.querySelector('[data-facet="make"]');
+    var form    = root.querySelector('.sa-vf-form');
+    var grid    = root.querySelector('.sa-vf__grid');
+    var count   = root.querySelector('.sa-vf__count');
+    var sortSel = root.querySelector('.sa-vf__sort');
+    var pager   = root.querySelector('.sa-vf__pager');
 
-    var state = { page: 1, busy: false };
+    var DATA = Array.isArray(CFG.vehicles) ? CFG.vehicles : [];
+    var PER  = Number(CFG.perPage) || 15;
+    var CAT  = Number(CFG.category) || 0;
+    var PB   = Array.isArray(CFG.priceBuckets) ? CFG.priceBuckets : [];
+    var KB   = Array.isArray(CFG.kmBuckets) ? CFG.kmBuckets : [];
 
-    /* ---------------------------------------------------------------- utils */
+    // Catalogue order (as shipped) is the "Featured" fallback order.
+    DATA.forEach(function (v, i) { v._i = i; });
 
-    function debounce(fn, ms) {
-        var t;
-        return function () {
-            var ctx = this, a = arguments;
-            clearTimeout(t);
-            t = setTimeout(function () { fn.apply(ctx, a); }, ms);
-        };
+    var state = { page: 1 };
+
+    /* ---------------------------------------------------------- filter engine */
+
+    function bucketByKey(list, key) {
+        if (!key) return null;
+        for (var i = 0; i < list.length; i++) if (list[i].key === key) return list[i];
+        return null;
+    }
+    // Half-open [min, max); a null value (no km/price) is never in a bucket.
+    function inBucket(val, b) {
+        if (val == null) return false;
+        var max = (b.max == null) ? Infinity : b.max;
+        return val >= b.min && val < max;
+    }
+    function cloneArgs(a) {
+        return { facets: Object.assign({}, a.facets), price: a.price, km: a.km, hideSold: a.hideSold, sort: a.sort };
+    }
+    function withArg(a, k, v) { var c = cloneArgs(a); c[k] = v; return c; }
+
+    /** Read the current filter state from the form controls. */
+    function collect() {
+        var a = { facets: {}, price: '', km: '', hideSold: true, sort: 'featured' };
+        form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
+            var k = s.getAttribute('data-facet');
+            if (k === 'price') { a.price = s.value; return; }
+            if (k === 'km')    { a.km = s.value; return; }
+            if (s.value) a.facets[k] = s.value;
+        });
+        // "Available Only" checked (default) hides sold; unchecking shows them.
+        a.hideSold = availToggle ? !!availToggle.checked : true;
+        if (sortSel && sortSel.value) a.sort = sortSel.value;
+        return a;
     }
 
-    /** Collect the current filter values into a flat object. */
-    function collect() {
-        var data = {};
-        form.querySelectorAll('.sa-vf-select').forEach(function (s) {
-            if (s.hasAttribute('data-region-nav')) return; // navigator, not a filter
-            if (s.name && s.value) data[s.name] = s.value;
+    /** Vehicles matching the args (facets ANDed, buckets half-open, sold + scope). */
+    function filterData(a) {
+        var pb = bucketByKey(PB, a.price), kb = bucketByKey(KB, a.km);
+        var fk = Object.keys(a.facets);
+        return DATA.filter(function (v) {
+            if (a.hideSold && v.sold) return false;
+            if (CAT && v.c.indexOf(CAT) === -1) return false;
+            if (pb && !inBucket(v.price, pb)) return false;
+            if (kb && !inBucket(v.km, kb)) return false;
+            for (var i = 0; i < fk.length; i++) {
+                var slug = a.facets[fk[i]];
+                if (!slug) continue;
+                var have = (v.f && v.f[fk[i]]) || [];
+                if (have.indexOf(slug) === -1) return false;
+            }
+            return true;
         });
-        // "Available Only" is the default; only send show_sold when the visitor
-        // unchecks it to reveal sold vehicles.
-        var ao = form.querySelector('[name="available_only"]');
-        if (ao && !ao.checked) data.show_sold = '1';
-        if (sortSel && sortSel.value) data.sort = sortSel.value;
-        return data;
+    }
+
+    /** Sort a matched set: sold always last, then by the chosen key. */
+    function sortData(arr, sort) {
+        return arr.slice().sort(function (A, B) {
+            var sa = A.sold ? 1 : 0, sb = B.sold ? 1 : 0;
+            if (sa !== sb) return sa - sb;
+            switch (sort) {
+                case 'price_asc':  return (A.price || 0) - (B.price || 0);
+                case 'price_desc': return (B.price || 0) - (A.price || 0);
+                case 'year_desc':  return (B.year || 0) - (A.year || 0);
+                case 'year_asc':   return (A.year || 0) - (B.year || 0);
+                case 'km_asc':     return (A.km || 0) - (B.km || 0);
+                case 'newest':     return B.id - A.id;
+                default:           return A._i - B._i; // featured = catalogue order
+            }
+        });
+    }
+
+    function bucketsPresent(rows, buckets, field) {
+        var set = {};
+        rows.forEach(function (v) {
+            var val = v[field];
+            if (val == null) return;
+            for (var i = 0; i < buckets.length; i++) {
+                if (inBucket(val, buckets[i])) { set[buckets[i].key] = 1; break; }
+            }
+        });
+        return Object.keys(set);
+    }
+
+    /**
+     * For each facet/bucket dropdown, which values can still produce a result
+     * given the OTHER active filters (its own selection excluded so it can be
+     * switched). Mirrors the old server availability map.
+     */
+    function computeAvail(a) {
+        var full = filterData(a), av = {};
+        form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (sel) {
+            var k = sel.getAttribute('data-facet'), rows;
+            if (k === 'km') {
+                rows = a.km ? filterData(withArg(a, 'km', '')) : full;
+                av.km = bucketsPresent(rows, KB, 'km');
+                return;
+            }
+            if (k === 'price') {
+                rows = a.price ? filterData(withArg(a, 'price', '')) : full;
+                av.price = bucketsPresent(rows, PB, 'price');
+                return;
+            }
+            if (a.facets[k]) {
+                var a2 = cloneArgs(a); delete a2.facets[k]; rows = filterData(a2);
+            } else {
+                rows = full;
+            }
+            var set = {};
+            rows.forEach(function (v) { ((v.f && v.f[k]) || []).forEach(function (s) { set[s] = 1; }); });
+            av[k] = Object.keys(set);
+        });
+        return av;
     }
 
     /** Reflect current filters into the URL (shareable, back-button friendly). */
-    function syncUrl(data) {
+    function syncUrl(a) {
         var qs = new URLSearchParams();
-        Object.keys(data).forEach(function (k) {
-            // Skip defaults to keep the URL tidy.
-            if (k === 'sort' && data[k] === 'featured') return;
-            qs.set(k, data[k]);
-        });
+        Object.keys(a.facets).forEach(function (k) { if (a.facets[k]) qs.set(k, a.facets[k]); });
+        if (a.price) qs.set('price', a.price);
+        if (a.km) qs.set('km', a.km);
+        if (!a.hideSold) qs.set('show_sold', '1');
+        if (a.sort && a.sort !== 'featured') qs.set('sort', a.sort);
         var url = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
         window.history.replaceState(null, '', url);
     }
 
-    /* --------------------------------------------------------------- request */
+    /* --------------------------------------------------------------- render */
 
-    var results = root.querySelector('.sa-vf__results');
+    /** The whole render pass — instant, no network. */
+    function render(scrollAfter) {
+        var a = collect();
+        syncUrl(a);
 
-    function request(scrollAfter) {
-        if (state.busy) return;
-        state.busy = true;
-        if (loading) loading.hidden = false;
-        if (results) results.classList.add('is-loading');
+        var arr   = sortData(filterData(a), a.sort);
+        var total = arr.length;
+        var pages = Math.max(1, Math.ceil(total / PER));
+        state.page = Math.min(Math.max(1, state.page), pages);
 
-        var data = collect();
-        syncUrl(data);
-        data.page = state.page;
-        data.action = 'sa_vf_query';
-        data.nonce = CFG.nonce;
-        // Location scope is fixed for the page — send it, but keep it out of the URL.
-        if (CFG.category) data.category = CFG.category;
+        var off   = (state.page - 1) * PER;
+        var slice = arr.slice(off, off + PER);
 
-        var body = new URLSearchParams();
-        Object.keys(data).forEach(function (k) { body.set(k, data[k]); });
+        grid.innerHTML = slice.length
+            ? slice.map(function (v) { return v.h; }).join('')
+            : '<div class="sa-vf-empty">No vehicles match your filters. Try widening your search.</div>';
 
-        fetch(CFG.ajax_url, {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: body.toString()
-        })
-        .then(function (r) { return r.json(); })
-        .then(function (res) {
-            if (!res || !res.success) throw new Error('bad response');
-            var d = res.data;
-            grid.innerHTML = d.html;
-            if (count) count.textContent = d.showing;
-            state.page = d.page;
-            renderPager(d.page, d.pages);
-            applyAvailability(d.available);
-            setApplyCount(d.total);
-            if (scrollAfter) scrollToResults();
-        })
-        .catch(function () {
-            grid.innerHTML = '<div class="sa-vf-empty">Something went wrong loading vehicles. Please try again.</div>';
-        })
-        .finally(function () {
-            state.busy = false;
-            if (loading) loading.hidden = true;
-            if (results) results.classList.remove('is-loading');
-        });
+        if (count) {
+            count.textContent = total
+                ? ('Showing ' + (off + 1) + '–' + Math.min(off + PER, total) + ' of ' + total + ' results')
+                : 'No results';
+        }
+
+        renderPager(state.page, pages);
+        applyAvailability(computeAvail(a));
+        setApplyCount(total);
+        updateActiveCount();
+        if (scrollAfter) scrollToResults();
     }
+
+    /* Any filter change re-runs from page 1 (user is at the top; no scroll). */
+    function rerun() { state.page = 1; render(false); }
 
     /* Which page numbers to show: first, last, current ±1, with gaps. */
     function pageList(page, pages) {
@@ -167,7 +250,7 @@
 
     function goToPage(n) {
         state.page = Math.max(1, n);
-        request(true); // scroll after loading
+        render(true); // scroll to results after paging
     }
 
     function scrollToResults() {
@@ -184,18 +267,12 @@
         window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
     }
 
-    /* Re-run from page 1 (any filter change). No scroll — user is at the top. */
-    var applyFilters = debounce(function () {
-        state.page = 1;
-        request(false);
-    }, 250);
-
     /* ------------------------------------------------- available options */
 
     /**
      * Hide the options in each facet dropdown that can't produce a result given
-     * the other active filters. `map` is { facetKey: [allowedValues...] } from
-     * the server. The currently-selected value is always kept visible.
+     * the other active filters. `map` is { facetKey: [allowedValues...] },
+     * computed client-side. The currently-selected value is always kept visible.
      */
     function applyAvailability(map) {
         if (!map) return;
@@ -237,11 +314,6 @@
         applyBtn.textContent = (Number(total) === 1) ? 'Show 1 vehicle' : 'Show ' + total + ' vehicles';
     }
 
-    function onFilterChange() {
-        updateActiveCount();
-        applyFilters();
-    }
-
     /* --------------------------------------------------------------- events */
 
     var availToggle = form.querySelector('[name="available_only"]');
@@ -255,17 +327,14 @@
             });
             return;
         }
-        s.addEventListener('change', onFilterChange);
+        s.addEventListener('change', rerun);
     });
 
-    if (availToggle) availToggle.addEventListener('change', onFilterChange);
-    if (sortSel) sortSel.addEventListener('change', applyFilters);
+    if (availToggle) availToggle.addEventListener('change', rerun);
+    if (sortSel) sortSel.addEventListener('change', rerun);
 
     var filterBtn = form.querySelector('.sa-vf-btn--filter');
-    if (filterBtn) filterBtn.addEventListener('click', function () {
-        state.page = 1;
-        request(false);
-    });
+    if (filterBtn) filterBtn.addEventListener('click', rerun);
 
     function clearAll() {
         form.querySelectorAll('.sa-vf-select').forEach(function (s) {
@@ -275,9 +344,7 @@
         // "Available Only" is the default state.
         if (availToggle) availToggle.checked = true;
         if (sortSel) sortSel.value = 'featured';
-        updateActiveCount();
-        state.page = 1;
-        request(false);
+        rerun();
     }
 
     root.querySelectorAll('.sa-vf-btn--clear').forEach(function (b) {
@@ -319,18 +386,9 @@
     });
 
     /* ----------------------------------------------------------------- boot */
-    applyAvailability(CFG.available);
-    updateActiveCount();
-    // Seed the "Show N vehicles" button from the server-rendered count.
-    if (count) {
-        var m = count.textContent.match(/of\s+([\d,]+)/);
-        if (m) setApplyCount(parseInt(m[1].replace(/,/g, ''), 10));
-    }
-    // Render numbered pagination from the server-seeded state.
-    renderPager(
-        parseInt(pager.getAttribute('data-page'), 10) || 1,
-        parseInt(pager.getAttribute('data-pages'), 10) || 1
-    );
+    // The form controls are pre-set from the URL by the server; render the
+    // matching state client-side (identical markup, so no visible flash).
+    render(false);
 })();
 
 
