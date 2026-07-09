@@ -325,74 +325,36 @@
 .sa-vf .sa-vf-select::-ms-expand { display: none; } /* legacy Edge/IE arrow */
 .sa-vf .sa-vf-select:focus { outline: none; border-color: var(--sa-vf-orange); }
 
-/* price range slider */
-.sa-vf-field--price { margin-top: 2px; margin-bottom: 6px; }
-.sa-vf-range {
-    position: relative;
-    height: 26px;
-    margin: 2px 4px 0;
+/* monthly payment buckets (radio group) */
+.sa-vf-field--price { margin-top: 6px; margin-bottom: 8px; }
+.sa-vf-price__legend {
+    display: block;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    color: var(--sa-vf-navy);
+    margin-bottom: 6px;
 }
-.sa-vf-range__track {
-    position: absolute;
-    top: 50%;
-    left: 0; right: 0;
-    height: 4px;
-    transform: translateY(-50%);
-    background: var(--sa-vf-border);
-    border-radius: 2px;
-}
-.sa-vf-range__fill {
-    position: absolute;
-    height: 100%;
-    background: var(--sa-vf-orange);
-    border-radius: 2px;
-}
-.sa-vf-range__input {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 28px;
-    margin: 0;
-    background: none;
-    pointer-events: none;
-    -webkit-appearance: none;
-    appearance: none;
-}
-.sa-vf-range__input::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    pointer-events: auto;
-    width: 16px; height: 16px;
-    border-radius: 50%;
-    background: #fff;
-    border: 2px solid var(--sa-vf-orange);
-    box-shadow: 0 1px 3px rgba(0,0,0,.25);
-    cursor: pointer;
-}
-.sa-vf-range__input::-moz-range-thumb {
-    pointer-events: auto;
-    width: 16px; height: 16px;
-    border-radius: 50%;
-    background: #fff;
-    border: 2px solid var(--sa-vf-orange);
-    box-shadow: 0 1px 3px rgba(0,0,0,.25);
-    cursor: pointer;
-}
-.sa-vf-range__input::-moz-range-track { background: none; }
-.sa-vf-range__labels {
+.sa-vf-price { display: flex; flex-direction: column; gap: 2px; }
+.sa-vf-radio {
     display: flex;
-    justify-content: center;
-    gap: 6px;
+    align-items: center;
+    gap: 9px;
+    padding: 6px 4px;
     font-size: 13px;
-    font-weight: 600;
-    margin-top: 4px;
+    color: var(--sa-vf-navy);
+    border-radius: var(--sa-vf-radius);
+    cursor: pointer;
+    transition: background .12s ease;
 }
-.sa-vf-range__unit {
-    text-align: center;
-    font-size: 11px;
-    font-style: italic;
-    color: var(--sa-vf-muted);
-    margin-top: 1px;
+.sa-vf-radio:hover { background: rgba(244,123,36,.07); }
+.sa-vf-radio input {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    accent-color: var(--sa-vf-orange);
+    cursor: pointer;
 }
 
 .sa-vf-field--check { margin-top: 9px; }
@@ -404,6 +366,11 @@
     cursor: pointer;
 }
 .sa-vf-check input { width: 16px; height: 16px; accent-color: var(--sa-vf-orange); }
+.sa-vf-check__hint {
+    margin: 3px 0 0 24px;
+    font-size: 11px;
+    color: var(--sa-vf-muted);
+}
 
 /* buttons */
 .sa-vf-actions { display: flex; flex-direction: column; gap: 7px; margin-top: 11px; }
@@ -627,33 +594,39 @@
 }
 @keyframes sa-vf-spin { to { transform: rotate(360deg); } }
 
-/* mobile filter toggle (hidden on desktop) */
+/* mobile filter toggle — a floating action button (hidden on desktop) */
 .sa-vf-toggle {
     display: none;
+    position: fixed;
+    left: 50%;
+    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    z-index: 9999;
     align-items: center;
-    gap: 8px;
-    width: 100%;
-    padding: 13px 16px;
-    margin-bottom: 16px;
+    gap: 10px;
+    padding: 14px 24px;
     border: none;
-    border-radius: var(--sa-vf-radius);
+    border-radius: 999px;
     background: var(--sa-vf-orange);
     color: #fff;
     font-weight: 700;
     font-size: 15px;
+    letter-spacing: .02em;
     text-transform: uppercase;
     cursor: pointer;
+    box-shadow: 0 6px 20px rgba(0,0,0,.28);
 }
+.sa-vf-toggle:hover { background: var(--sa-vf-orange-dark); }
 .sa-vf-toggle__count {
-    margin-left: auto;
-    min-width: 22px;
-    height: 22px;
-    padding: 0 6px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 7px;
     border-radius: 999px;
     background: #fff;
     color: var(--sa-vf-orange);
     font-size: 13px;
-    line-height: 22px;
+    font-weight: 800;
+    line-height: 24px;
     text-align: center;
 }
 
@@ -670,7 +643,9 @@
     .sa-vf-archive { padding: 16px 16px 40px; }
 
     .sa-vf__layout { grid-template-columns: 1fr; }
-    .sa-vf-toggle { display: flex; }
+    .sa-vf-toggle { display: inline-flex; }
+    /* The floating button would sit on top of the open drawer — hide it then. */
+    body.sa-vf-open .sa-vf-toggle { display: none; }
 
     /* Filter sidebar becomes a full-screen slide-in drawer. */
     .sa-vf__sidebar {
@@ -735,7 +710,9 @@
     .sa-vf-field { margin-bottom: 12px; }
     .sa-vf .sa-vf-select { min-height: 48px; font-size: 15px; }
     .sa-vf-check { font-size: 15px; padding: 4px 0; }
-    .sa-vf-range { height: 34px; }
+    .sa-vf-check__hint { font-size: 12px; }
+    .sa-vf-radio { font-size: 15px; padding: 9px 4px; }
+    .sa-vf-price__legend { font-size: 13px; }
 }
 body.sa-vf-open { overflow: hidden; }
 

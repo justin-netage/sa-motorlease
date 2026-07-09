@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.4.3
+ * Version: 2.4.4
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.4.3' );
+define( 'SA_MOTORLEASE_VERSION', '2.4.4' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -26,17 +26,24 @@ $sa_motorlease_update_checker->getVcsApi()->enableReleaseAssets();
 // Custom vehicle filter — self-contained [sa_vehicle_filter] shortcode that
 // replaces the WBW / WooBeWoo Product Filter on the vehicles archive.
 //
-// Gated behind a feature flag while the 2.4.0 filter is still being finalised,
-// so a 2.4.x release (e.g. the image-sync fix) can ship without switching the
-// front-end filter, shortcodes and location-archive takeover live. Enable it
-// by defining SA_MOTORLEASE_ENABLE_VEHICLE_FILTER as true (e.g. in
-// wp-config.php), or flip the default below to true once it's ready to go live.
+// Gated so a 2.4.x release can ship without switching the front-end filter,
+// shortcodes and location-archive takeover live. It's enabled by either:
+//   - defining SA_MOTORLEASE_ENABLE_VEHICLE_FILTER as true (e.g. wp-config.php), or
+//   - the admin-only "Enable vehicle filter" setting (Vehicle Listings section),
+//     which is only visible to the designated admin (see sa_motorlease_is_filter_admin).
+// The option is read directly here because this runs during plugin load, before
+// the settings helpers further down the file are defined.
 if ( ! defined( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER' ) ) {
     define( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER', false );
 }
-if ( SA_MOTORLEASE_ENABLE_VEHICLE_FILTER ) {
+$sa_ml_vf_opts = get_option( 'sa_motorlease_settings', [] );
+if (
+    SA_MOTORLEASE_ENABLE_VEHICLE_FILTER
+    || ( is_array( $sa_ml_vf_opts ) && ! empty( $sa_ml_vf_opts['vehicle_filter_enabled'] ) )
+) {
     require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
 }
+unset( $sa_ml_vf_opts );
 
 // === CONFIG =================================================================
 
@@ -5626,7 +5633,20 @@ function sa_motorlease_default_settings() {
         'log_retention_days'   => 21,
         'listings_disclaimer'  => 'Please note all vehicle listings are subject to availability and may change without prior notice. Images are for illustration purposes only and may differ from the actual vehicle offered. Prices, specifications, and features are provided as a guide and may vary depending on stock, condition, and applicable fees. Placement on this page does not guarantee that a vehicle is currently available',
         'listings_page_id'     => 0,
+        'vehicle_filter_enabled' => 0,
     ];
+}
+
+/**
+ * The custom vehicle filter is still being rolled out, so the toggle that turns
+ * it on is only exposed to this one operator. Everyone else (including other
+ * administrators) never sees the field, and their settings saves can't change
+ * the flag.
+ */
+function sa_motorlease_is_filter_admin() {
+    $u = wp_get_current_user();
+    return $u && ! empty( $u->user_email )
+        && strcasecmp( $u->user_email, 'jake@netage.co.za' ) === 0;
 }
 
 function sa_motorlease_get_settings() {
@@ -5924,6 +5944,12 @@ add_action( 'admin_init', function () {
 
     $f( 'listings_page_id',    'Listings page',       'sa_motorlease_field_listings_page',       'sa_motorlease_section_listings' );
     $f( 'listings_disclaimer', 'Listings disclaimer', 'sa_motorlease_field_listings_disclaimer', 'sa_motorlease_section_listings' );
+
+    // Roll-out toggle for the custom vehicle filter — only shown to the
+    // designated admin so nobody else can flip the front end over.
+    if ( sa_motorlease_is_filter_admin() ) {
+        $f( 'vehicle_filter_enabled', 'Enable vehicle filter', 'sa_motorlease_field_vehicle_filter_enabled', 'sa_motorlease_section_listings' );
+    }
 } );
 
 function sa_motorlease_sanitize_settings( $input ) {
@@ -5963,6 +5989,13 @@ function sa_motorlease_sanitize_settings( $input ) {
 
     if ( isset( $input['listings_page_id'] ) ) {
         $out['listings_page_id'] = max( 0, (int) $input['listings_page_id'] );
+    }
+
+    // Only the designated admin sees (and can change) the filter roll-out flag.
+    // For every other user the field isn't rendered, so leave the stored value
+    // untouched — don't let an unchecked-because-absent box silently disable it.
+    if ( sa_motorlease_is_filter_admin() ) {
+        $out['vehicle_filter_enabled'] = ! empty( $input['vehicle_filter_enabled'] ) ? 1 : 0;
     }
 
     return $out;
@@ -6045,6 +6078,19 @@ function sa_motorlease_field_listings_disclaimer() {
         esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), esc_textarea( $val )
     );
     echo '<p class="description">Shown beneath the title on the vehicle listings page and the location category pages. Place it anywhere with the <code>[sa_listings_disclaimer]</code> shortcode. Basic HTML is allowed; leave blank to hide it.</p>';
+}
+
+function sa_motorlease_field_vehicle_filter_enabled() {
+    $on       = (bool) sa_motorlease_get_setting( 'vehicle_filter_enabled' );
+    $forced   = defined( 'SA_MOTORLEASE_ENABLE_VEHICLE_FILTER' ) && SA_MOTORLEASE_ENABLE_VEHICLE_FILTER;
+    printf(
+        '<label><input type="checkbox" name="%s[vehicle_filter_enabled]" value="1" %s> Turn on the custom vehicle filter, shortcodes and location-archive takeover</label>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), checked( $on, true, false )
+    );
+    echo '<p class="description">Enables the <code>[sa_vehicle_listings]</code> / <code>[sa_vehicle_filter]</code> shortcodes and takes over the WooCommerce location category archives. Takes effect on the next page load.</p>';
+    if ( $forced ) {
+        echo '<p class="description"><strong>Note:</strong> the <code>SA_MOTORLEASE_ENABLE_VEHICLE_FILTER</code> constant is defined and forces the filter on regardless of this checkbox.</p>';
+    }
 }
 
 // --- Settings page renderer -------------------------------------------------

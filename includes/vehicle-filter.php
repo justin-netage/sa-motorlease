@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.6.3' );
+    define( 'SA_VF_VERSION', '1.7.0' );
 }
 
 /**
@@ -34,6 +34,23 @@ function sa_vf_facets() {
         [ 'key' => 'body_type',    'label' => 'Body Type',    'tax' => 'pa_vehicle-type' ],
         [ 'key' => 'fuel',         'label' => 'Fuel',         'tax' => 'pa_fuel' ],
         [ 'key' => 'year',         'label' => 'Year Model',   'tax' => 'pa_vehicle-year' ],
+    ];
+}
+
+/**
+ * Monthly payment buckets. Bounds are continuous — `min` inclusive, `max`
+ * exclusive — so every price falls in exactly one bucket. The labels use the
+ * marketing boundaries (…,999 / …,001) but the query cutoffs are the round
+ * numbers below.
+ */
+function sa_vf_price_buckets() {
+    return [
+        [ 'key' => '0-6000',      'label' => 'Under R6,000',      'min' => 0,     'max' => 6000 ],
+        [ 'key' => '6000-8000',   'label' => 'R6,001 – R7,999',   'min' => 6000,  'max' => 8000 ],
+        [ 'key' => '8000-10000',  'label' => 'R8,000 – R9,999',   'min' => 8000,  'max' => 10000 ],
+        [ 'key' => '10000-13000', 'label' => 'R10,000 – R12,999', 'min' => 10000, 'max' => 13000 ],
+        [ 'key' => '13000-16000', 'label' => 'R13,000 – R15,999', 'min' => 13000, 'max' => 16000 ],
+        [ 'key' => '16000-',      'label' => 'R16,000+',          'min' => 16000, 'max' => PHP_INT_MAX ],
     ];
 }
 
@@ -140,32 +157,6 @@ function sa_vf_region_nav( $category_id ) {
     return [ 'current' => $category_id, 'options' => $options ];
 }
 
-/** min/max monthly price across published vehicles (cached 15 min). */
-function sa_vf_price_bounds() {
-    $cached = get_transient( 'sa_vf_price_bounds' );
-    if ( is_array( $cached ) ) return $cached;
-
-    global $wpdb;
-    $row = $wpdb->get_row(
-        "SELECT MIN(CAST(pm.meta_value AS DECIMAL(12,2))) AS min_p,
-                MAX(CAST(pm.meta_value AS DECIMAL(12,2))) AS max_p
-           FROM {$wpdb->postmeta} pm
-           INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-          WHERE pm.meta_key = '_price'
-            AND pm.meta_value <> ''
-            AND p.post_type = 'product'
-            AND p.post_status = 'publish'"
-    );
-
-    $min = $row && $row->min_p !== null ? (int) floor( $row->min_p ) : 0;
-    $max = $row && $row->max_p !== null ? (int) ceil( $row->max_p )  : 25000;
-    if ( $max <= $min ) $max = $min + 1000;
-
-    $bounds = [ 'min' => $min, 'max' => $max ];
-    set_transient( 'sa_vf_price_bounds', $bounds, 15 * MINUTE_IN_SECONDS );
-    return $bounds;
-}
-
 /**
  * Map of make-slug => [ model-slug => model-name ] so the Model dropdown can
  * narrow to the chosen Make client-side. Cached 15 min.
@@ -252,13 +243,22 @@ function sa_vf_parse_args( array $src ) {
     $args = [
         'sort'     => 'featured',
         'page'     => 1,
-        'hide_sold'=> in_array( $str( 'hide_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
+        // "Available Only" is on by default — sold vehicles are hidden unless the
+        // visitor explicitly opts to show them (show_sold=1).
+        'hide_sold'=> ! in_array( $str( 'show_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
         'km'       => $str( 'km' ),
-        'price_min'=> ( $str( 'price_min' ) !== '' ) ? (int) $str( 'price_min' ) : null,
-        'price_max'=> ( $str( 'price_max' ) !== '' ) ? (int) $str( 'price_max' ) : null,
+        'price'    => '', // monthly-payment bucket key (see sa_vf_price_buckets)
         'category' => 0, // product_cat term the whole view is locked to (location archives)
         'facets'   => [],
     ];
+
+    // Monthly payment bucket — validated against the known set.
+    $price = $str( 'price' );
+    if ( $price !== '' ) {
+        foreach ( sa_vf_price_buckets() as $b ) {
+            if ( $b['key'] === $price ) { $args['price'] = $price; break; }
+        }
+    }
 
     // Category scope may arrive as a term id or slug; resolve to an id.
     $cat = $str( 'category' );
@@ -332,15 +332,19 @@ function sa_vf_matching_ids( array $args ) {
     }
 
     $meta_query = [];
-    if ( $args['price_min'] !== null || $args['price_max'] !== null ) {
-        $min = $args['price_min'] !== null ? $args['price_min'] : 0;
-        $max = $args['price_max'] !== null ? $args['price_max'] : PHP_INT_MAX;
-        $meta_query[] = [
-            'key'     => '_price',
-            'value'   => [ $min, $max ],
-            'compare' => 'BETWEEN',
-            'type'    => 'NUMERIC',
-        ];
+    if ( ! empty( $args['price'] ) ) {
+        $bucket = null;
+        foreach ( sa_vf_price_buckets() as $b ) {
+            if ( $b['key'] === $args['price'] ) { $bucket = $b; break; }
+        }
+        if ( $bucket ) {
+            // Half-open range [min, max) so a price never matches two buckets.
+            $meta_query[] = [
+                'relation' => 'AND',
+                [ 'key' => '_price', 'value' => $bucket['min'], 'compare' => '>=', 'type' => 'NUMERIC' ],
+                [ 'key' => '_price', 'value' => $bucket['max'], 'compare' => '<',  'type' => 'NUMERIC' ],
+            ];
+        }
     }
 
     $q_args = [
@@ -653,7 +657,6 @@ function sa_vf_shortcode( $atts ) {
     }
 
     $result = sa_vf_run_query( $initial );
-    $bounds = sa_vf_price_bounds();
 
     // On a category page the Region dropdown navigates between location
     // archives (scoped to the current province) instead of filtering.
@@ -662,7 +665,6 @@ function sa_vf_shortcode( $atts ) {
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF', [
         'ajax_url'   => admin_url( 'admin-ajax.php' ),
         'nonce'      => wp_create_nonce( 'sa_vf' ),
-        'price'      => $bounds,
         'available'  => sa_vf_available( $initial ), // options still possible on load
         'per_page'   => (int) SA_VF_PER_PAGE,
         'sort'       => sa_vf_sort_options(),

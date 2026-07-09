@@ -2,8 +2,8 @@
  * SA Motorlease — Custom Vehicle Filter (frontend)
  *
  * Instant AJAX filtering over the pa_* attribute facets, dependent Make→Model,
- * a dual monthly-price slider, sorting, "load more" pagination, shareable URL
- * state and a mobile filter toggle. No jQuery / no external deps.
+ * monthly-payment buckets, sorting, numbered pagination, shareable URL state
+ * and a floating mobile filter button. No jQuery / no external deps.
  */
 (function () {
     'use strict';
@@ -27,10 +27,6 @@
 
     /* ---------------------------------------------------------------- utils */
 
-    function fmtR(n) {
-        return Number(n).toLocaleString('en-ZA');
-    }
-
     function debounce(fn, ms) {
         var t;
         return function () {
@@ -47,12 +43,12 @@
             if (s.hasAttribute('data-region-nav')) return; // navigator, not a filter
             if (s.name && s.value) data[s.name] = s.value;
         });
-        var pmin = form.querySelector('[name="price_min"]');
-        var pmax = form.querySelector('[name="price_max"]');
-        if (pmin && pmin.value) data.price_min = pmin.value;
-        if (pmax && pmax.value) data.price_max = pmax.value;
-        var hs = form.querySelector('[name="hide_sold"]');
-        if (hs && hs.checked) data.hide_sold = '1';
+        var pb = form.querySelector('[name="price"]:checked');
+        if (pb && pb.value) data.price = pb.value;
+        // "Available Only" is the default; only send show_sold when the visitor
+        // unchecks it to reveal sold vehicles.
+        var ao = form.querySelector('[name="available_only"]');
+        if (ao && !ao.checked) data.show_sold = '1';
         if (sortSel && sortSel.value) data.sort = sortSel.value;
         return data;
     }
@@ -63,8 +59,6 @@
         Object.keys(data).forEach(function (k) {
             // Skip defaults to keep the URL tidy.
             if (k === 'sort' && data[k] === 'featured') return;
-            if (k === 'price_min' && Number(data[k]) <= CFG.price.min) return;
-            if (k === 'price_max' && Number(data[k]) >= CFG.price.max) return;
             qs.set(k, data[k]);
         });
         var url = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
@@ -222,47 +216,6 @@
         });
     }
 
-    /* --------------------------------------------------------- price slider */
-
-    function initRange() {
-        var wrap = root.querySelector('.sa-vf-range');
-        if (!wrap) return;
-        var minInput = wrap.querySelector('.sa-vf-range__min');
-        var maxInput = wrap.querySelector('.sa-vf-range__max');
-        var fill     = wrap.querySelector('.sa-vf-range__fill');
-        var minVal   = root.querySelector('.sa-vf-range__minval');
-        var maxVal   = root.querySelector('.sa-vf-range__maxval');
-        var hidMin   = form.querySelector('[name="price_min"]');
-        var hidMax   = form.querySelector('[name="price_max"]');
-        var lo = Number(wrap.getAttribute('data-min'));
-        var hi = Number(wrap.getAttribute('data-max'));
-        var span = Math.max(1, hi - lo);
-
-        function paint() {
-            var a = Number(minInput.value);
-            var b = Number(maxInput.value);
-            if (a > b - 1) { // keep a gap so handles don't cross
-                if (this === maxInput) { a = b; minInput.value = a; }
-                else { b = a; maxInput.value = b; }
-            }
-            var left  = ((a - lo) / span) * 100;
-            var right = ((b - lo) / span) * 100;
-            fill.style.left  = left + '%';
-            fill.style.width = (right - left) + '%';
-            minVal.textContent = fmtR(a);
-            maxVal.textContent = fmtR(b);
-            hidMin.value = a;
-            hidMax.value = b;
-            updateActiveCount();
-        }
-
-        minInput.addEventListener('input', paint);
-        maxInput.addEventListener('input', paint);
-        minInput.addEventListener('change', applyFilters);
-        maxInput.addEventListener('change', applyFilters);
-        paint();
-    }
-
     /* --------------------------------------------- active filter count badge */
 
     var toggleCount = root.querySelector('.sa-vf-toggle__count');
@@ -273,11 +226,10 @@
         form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
             if (s.value) n++;
         });
-        if (hideSold && hideSold.checked) n++;
-        var pmin = form.querySelector('[name="price_min"]');
-        var pmax = form.querySelector('[name="price_max"]');
-        if ((pmin && Number(pmin.value) > CFG.price.min) ||
-            (pmax && Number(pmax.value) < CFG.price.max)) n++;
+        var pb = form.querySelector('[name="price"]:checked');
+        if (pb && pb.value) n++;
+        // Showing sold vehicles is a deviation from the default, so it counts.
+        if (availToggle && !availToggle.checked) n++;
         if (toggleCount) {
             toggleCount.textContent = n;
             toggleCount.hidden = n === 0;
@@ -296,7 +248,7 @@
 
     /* --------------------------------------------------------------- events */
 
-    var hideSold = form.querySelector('[name="hide_sold"]');
+    var availToggle = form.querySelector('[name="available_only"]');
 
     form.querySelectorAll('.sa-vf-select').forEach(function (s) {
         if (s.hasAttribute('data-region-nav')) {
@@ -310,7 +262,10 @@
         s.addEventListener('change', onFilterChange);
     });
 
-    if (hideSold) hideSold.addEventListener('change', onFilterChange);
+    form.querySelectorAll('[name="price"]').forEach(function (r) {
+        r.addEventListener('change', onFilterChange);
+    });
+    if (availToggle) availToggle.addEventListener('change', onFilterChange);
     if (sortSel) sortSel.addEventListener('change', applyFilters);
 
     var filterBtn = form.querySelector('.sa-vf-btn--filter');
@@ -324,15 +279,12 @@
             if (s.hasAttribute('data-region-nav')) return; // keep current location
             s.value = '';
         });
-        if (hideSold) hideSold.checked = false;
+        // Reset the monthly-payment radios back to "Any".
+        var anyPrice = form.querySelector('[name="price"][value=""]');
+        if (anyPrice) anyPrice.checked = true;
+        // "Available Only" is the default state.
+        if (availToggle) availToggle.checked = true;
         if (sortSel) sortSel.value = 'featured';
-        var minInput = root.querySelector('.sa-vf-range__min');
-        var maxInput = root.querySelector('.sa-vf-range__max');
-        if (minInput && maxInput) {
-            minInput.value = CFG.price.min;
-            maxInput.value = CFG.price.max;
-            minInput.dispatchEvent(new Event('input'));
-        }
         updateActiveCount();
         state.page = 1;
         request(false);
@@ -378,7 +330,6 @@
 
     /* ----------------------------------------------------------------- boot */
     applyAvailability(CFG.available);
-    initRange();
     updateActiveCount();
     // Seed the "Show N vehicles" button from the server-rendered count.
     if (count) {

@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.4.3
+Stable tag: 2.4.4
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,14 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.4.4 =
+Custom vehicle filter refinements plus an admin-only enable switch.
+
+* **Monthly Payment filter.** The dual price slider is replaced with a set of monthly-payment buckets (Under R6,000, R6,001–R7,999, R8,000–R9,999, R10,000–R12,999, R13,000–R15,999, R16,000+) chosen with radio buttons — clearer and faster to tap than dragging a slider.
+* **"Available Only" toggle.** The "Hide sold vehicles" checkbox becomes a pre-checked **Available Only** toggle: sold vehicles are hidden by default, and unchecking it shows them.
+* **Floating mobile filter button.** On phones the filter opener is now a floating action button pinned to the bottom of the screen, with a badge showing how many filters are active.
+* **Admin-only enable switch.** The custom vehicle filter can be turned on from the Vehicle Listings settings section. That switch is only visible to — and only changeable by — the designated admin; the `SA_MOTORLEASE_ENABLE_VEHICLE_FILTER` constant still forces it on when defined.
 
 = 2.4.3 =
 Cache-busting for changed vehicle images. The client updates photos often, and reusing the same media URL let Cloudflare / browsers keep serving the previous picture even after the file was correctly replaced on the server.

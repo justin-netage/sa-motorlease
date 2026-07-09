@@ -2,20 +2,17 @@
 /**
  * Markup for the [sa_vehicle_filter] shortcode.
  *
- * In scope: $initial (parsed args), $result (initial query result),
- *           $bounds (price min/max), $atts.
+ * In scope: $initial (parsed args), $result (initial query result), $atts.
  */
 if ( ! defined( 'ABSPATH' ) ) exit;
 
-$facets     = sa_vf_facets();
-$sel        = $initial['facets'];
-$price_min  = $initial['price_min'] !== null ? $initial['price_min'] : $bounds['min'];
-$price_max  = $initial['price_max'] !== null ? $initial['price_max'] : $bounds['max'];
+$facets = sa_vf_facets();
+$sel    = $initial['facets'];
 ?>
-<div class="sa-vf" data-price-min="<?php echo esc_attr( $bounds['min'] ); ?>" data-price-max="<?php echo esc_attr( $bounds['max'] ); ?>">
+<div class="sa-vf">
 
     <button type="button" class="sa-vf-toggle" aria-expanded="false" aria-controls="sa-vf-sidebar">
-        <span class="sa-vf-toggle__icon">&#9776;</span> Filter Vehicles
+        <span class="sa-vf-toggle__icon">&#9776;</span> Filters
         <span class="sa-vf-toggle__count" hidden>0</span>
     </button>
 
@@ -77,33 +74,30 @@ $price_max  = $initial['price_max'] !== null ? $initial['price_max'] : $bounds['
                     </select>
                 </div>
 
-                <?php // Monthly price range ?>
+                <?php // Monthly payment buckets ?>
                 <div class="sa-vf-field sa-vf-field--price">
-                    <div class="sa-vf-range" data-min="<?php echo esc_attr( $bounds['min'] ); ?>" data-max="<?php echo esc_attr( $bounds['max'] ); ?>">
-                        <div class="sa-vf-range__track"><div class="sa-vf-range__fill"></div></div>
-                        <input type="range" class="sa-vf-range__input sa-vf-range__min"
-                               min="<?php echo esc_attr( $bounds['min'] ); ?>" max="<?php echo esc_attr( $bounds['max'] ); ?>"
-                               value="<?php echo esc_attr( $price_min ); ?>" step="1">
-                        <input type="range" class="sa-vf-range__input sa-vf-range__max"
-                               min="<?php echo esc_attr( $bounds['min'] ); ?>" max="<?php echo esc_attr( $bounds['max'] ); ?>"
-                               value="<?php echo esc_attr( $price_max ); ?>" step="1">
+                    <span class="sa-vf-price__legend">Monthly Payment</span>
+                    <div class="sa-vf-price" role="radiogroup" aria-label="Monthly Payment">
+                        <label class="sa-vf-radio">
+                            <input type="radio" name="price" value="" <?php checked( $initial['price'], '' ); ?>>
+                            <span>Any</span>
+                        </label>
+                        <?php foreach ( sa_vf_price_buckets() as $b ) : ?>
+                            <label class="sa-vf-radio">
+                                <input type="radio" name="price" value="<?php echo esc_attr( $b['key'] ); ?>" <?php checked( $initial['price'], $b['key'] ); ?>>
+                                <span><?php echo esc_html( $b['label'] ); ?></span>
+                            </label>
+                        <?php endforeach; ?>
                     </div>
-                    <div class="sa-vf-range__labels">
-                        <span>R <span class="sa-vf-range__minval"><?php echo esc_html( $price_min ); ?></span></span>
-                        <span class="sa-vf-range__dash">–</span>
-                        <span class="sa-vf-range__maxval"><?php echo esc_html( $price_max ); ?></span>
-                    </div>
-                    <div class="sa-vf-range__unit">per month</div>
-                    <input type="hidden" name="price_min" value="<?php echo esc_attr( $price_min ); ?>">
-                    <input type="hidden" name="price_max" value="<?php echo esc_attr( $price_max ); ?>">
                 </div>
 
-                <?php // Hide sold ?>
+                <?php // Availability — "Available Only" is on by default; unchecking shows sold vehicles ?>
                 <div class="sa-vf-field sa-vf-field--check">
                     <label class="sa-vf-check">
-                        <input type="checkbox" name="hide_sold" value="1" <?php checked( $initial['hide_sold'] ); ?>>
-                        <span>Hide sold vehicles</span>
+                        <input type="checkbox" name="available_only" value="1" <?php checked( $initial['hide_sold'] ); ?>>
+                        <span>Available Only</span>
                     </label>
+                    <p class="sa-vf-check__hint">Uncheck to show sold vehicles</p>
                 </div>
 
                 <div class="sa-vf-actions">
