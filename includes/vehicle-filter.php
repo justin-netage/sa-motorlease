@@ -457,6 +457,29 @@ add_action( 'admin_init', function () {
         ? 'YES — served from cache (' . $ms( $tread ) . ' to read)'
         : 'NO — every request rebuilds it  <<< this is the problem' );
 
+    // If it's not fresh, is the transient even in the DB, and at what version?
+    // Reading the raw option bypasses the transient API so we can tell a failed
+    // write apart from a version mismatch (something bumping the version).
+    if ( ! $fresh ) {
+        $raw = get_option( '_transient_sa_vf_index' );
+        if ( $raw === false ) {
+            $out[] = '  → raw transient in wp_options: MISSING (the write is not persisting / being cleared)';
+        } else {
+            $sver = 'unknown';
+            if ( is_string( $raw ) && strlen( $raw ) > 2 ) {
+                $tag = substr( $raw, 0, 2 );
+                $b   = substr( $raw, 2 );
+                if ( $tag === 'g:' && function_exists( 'gzuncompress' ) ) {
+                    $b = @gzuncompress( (string) base64_decode( $b ) );
+                }
+                $d = is_string( $b ) ? @unserialize( $b ) : false;
+                if ( is_array( $d ) && isset( $d['ver'] ) ) $sver = (string) $d['ver'];
+            }
+            $out[] = sprintf( '  → raw transient in wp_options: present, stored at version %s vs current %d %s',
+                $sver, $ver, ( $sver !== (string) $ver ) ? '(VERSION MISMATCH — a hook is bumping it)' : '(same version — cleared between requests?)' );
+        }
+    }
+
     // Cold build cost + size.
     $t0       = microtime( true );
     $rows     = sa_vf_build_index();
@@ -872,8 +895,21 @@ function sa_vf_ajax_query() {
     // products) — mirrors the /qualified-vehicles REST route. Not nonce-gated
     // so it keeps working behind full-page caching where a localized nonce
     // would otherwise go stale and 403 every filter request.
+    $t0   = microtime( true );
     $args = sa_vf_parse_args( $_POST );
-    wp_send_json_success( sa_vf_payload( $args ) );
+    $data = sa_vf_payload( $args );
+
+    // Timing breakdown so the real cost is visible in the Network tab:
+    //   boot_ms = WordPress + theme + all plugins initialising BEFORE this
+    //             handler runs (the admin-ajax bootstrap). If this dominates,
+    //             the slowness is the site's stack, not the filter.
+    //   work_ms = this handler's own work (query + render, or cache hit).
+    $req = isset( $_SERVER['REQUEST_TIME_FLOAT'] ) ? (float) $_SERVER['REQUEST_TIME_FLOAT'] : $t0;
+    $data['_t'] = [
+        'boot_ms' => (int) round( ( $t0 - $req ) * 1000 ),
+        'work_ms' => (int) round( ( microtime( true ) - $t0 ) * 1000 ),
+    ];
+    wp_send_json_success( $data );
 }
 
 /* ===========================================================================

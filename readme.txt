@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.5.2
+Stable tag: 2.5.3
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,12 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.5.3 =
+Adds timing instrumentation to pinpoint slow filter responses.
+
+* **Per-request timing in the AJAX response.** The filter's AJAX reply now carries a `_t` object with `boot_ms` (WordPress + theme + all other plugins initialising before the handler runs) and `work_ms` (this plugin's own query/render). Viewing it in the Network tab shows immediately whether slowness is the site's bootstrap or this filter.
+* **Deeper index diagnostic.** When `?sa_vf_diag=1` reports the index isn't being reused, it now also reads the raw transient from `wp_options` and reports whether the write is missing entirely or stored at a mismatched version — distinguishing a cache-persistence problem from something bumping the version every request.
 
 = 2.5.2 =
 Diagnoses and hardens the filter's index cache after reports of slow filtering on sites with a persistent object cache.
