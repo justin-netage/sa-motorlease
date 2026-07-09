@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.4.4
+Stable tag: 2.4.5
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,13 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.4.5 =
+Makes the custom vehicle filter respond instantly while staying in sync with the importer.
+
+* **In-memory vehicle index.** The whole published catalogue (price, sold status, mileage, year, every facet slug and the category tree) is pre-computed once into a single cached array. Filtering, faceting ("which options are still possible") and sorting now run entirely in memory with no per-request database queries — previously each request ran a full unpaginated `WP_Query` per selected facet plus a `get_post_meta`/`get_the_terms` for every matching vehicle, which is what made the filter slow.
+* **Versioned cache that tracks the importer.** The index carries a version stamp that bumps on any vehicle change — create/update/delete, term reassignment (make/model/sold/…), and the price/image meta the PaceApp importer rewrites — so filter results never go stale. After an import the reindex signal rebuilds and re-warms the cache immediately, so the first visitor afterwards doesn't pay a cold rebuild.
+* **Response cache.** Each filter response (results HTML + available options) is cached per index-version, so paging and common filter combinations return with no rendering at all. It clears automatically whenever the index version changes.
 
 = 2.4.4 =
 Custom vehicle filter refinements plus an admin-only enable switch.
