@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.6.3' );
+    define( 'SA_VF_VERSION', '1.7.0' );
 }
 
 /**
@@ -34,6 +34,23 @@ function sa_vf_facets() {
         [ 'key' => 'body_type',    'label' => 'Body Type',    'tax' => 'pa_vehicle-type' ],
         [ 'key' => 'fuel',         'label' => 'Fuel',         'tax' => 'pa_fuel' ],
         [ 'key' => 'year',         'label' => 'Year Model',   'tax' => 'pa_vehicle-year' ],
+    ];
+}
+
+/**
+ * Monthly payment buckets. Bounds are continuous — `min` inclusive, `max`
+ * exclusive — so every price falls in exactly one bucket. The labels use the
+ * marketing boundaries (…,999 / …,001) but the query cutoffs are the round
+ * numbers below.
+ */
+function sa_vf_price_buckets() {
+    return [
+        [ 'key' => '0-6000',      'label' => 'Under R6,000',      'min' => 0,     'max' => 6000 ],
+        [ 'key' => '6000-8000',   'label' => 'R6,001 – R7,999',   'min' => 6000,  'max' => 8000 ],
+        [ 'key' => '8000-10000',  'label' => 'R8,000 – R9,999',   'min' => 8000,  'max' => 10000 ],
+        [ 'key' => '10000-13000', 'label' => 'R10,000 – R12,999', 'min' => 10000, 'max' => 13000 ],
+        [ 'key' => '13000-16000', 'label' => 'R13,000 – R15,999', 'min' => 13000, 'max' => 16000 ],
+        [ 'key' => '16000-',      'label' => 'R16,000+',          'min' => 16000, 'max' => PHP_INT_MAX ],
     ];
 }
 
@@ -140,97 +157,208 @@ function sa_vf_region_nav( $category_id ) {
     return [ 'current' => $category_id, 'options' => $options ];
 }
 
-/** min/max monthly price across published vehicles (cached 15 min). */
-function sa_vf_price_bounds() {
-    $cached = get_transient( 'sa_vf_price_bounds' );
-    if ( is_array( $cached ) ) return $cached;
+/* ===========================================================================
+ * Vehicle index — the whole catalogue (price, sold, km, year, facet slugs and
+ * category tree) pre-computed into one cached array. Every filter/sort/facet
+ * request then runs entirely in-memory over this array with no per-request
+ * database work, so the filter responds instantly. The index is versioned and
+ * rebuilt whenever a vehicle changes (see the invalidation hooks below), which
+ * keeps it in lock-step with the PaceApp importer.
+ * ======================================================================== */
 
-    global $wpdb;
-    $row = $wpdb->get_row(
-        "SELECT MIN(CAST(pm.meta_value AS DECIMAL(12,2))) AS min_p,
-                MAX(CAST(pm.meta_value AS DECIMAL(12,2))) AS max_p
-           FROM {$wpdb->postmeta} pm
-           INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
-          WHERE pm.meta_key = '_price'
-            AND pm.meta_value <> ''
-            AND p.post_type = 'product'
-            AND p.post_status = 'publish'"
-    );
-
-    $min = $row && $row->min_p !== null ? (int) floor( $row->min_p ) : 0;
-    $max = $row && $row->max_p !== null ? (int) ceil( $row->max_p )  : 25000;
-    if ( $max <= $min ) $max = $min + 1000;
-
-    $bounds = [ 'min' => $min, 'max' => $max ];
-    set_transient( 'sa_vf_price_bounds', $bounds, 15 * MINUTE_IN_SECONDS );
-    return $bounds;
+/** Monotonic version stamp; every vehicle change bumps it, busting the index. */
+function sa_vf_index_version() {
+    return (int) get_option( 'sa_vf_index_ver', 0 );
 }
 
 /**
- * Map of make-slug => [ model-slug => model-name ] so the Model dropdown can
- * narrow to the chosen Make client-side. Cached 15 min.
+ * Invalidate the index. Debounced to one bump per request via a static guard so
+ * a bulk import touching hundreds of products only stamps a single new version
+ * (the rebuild itself is lazy — it happens on the next read, not here).
  */
-function sa_vf_make_model_map() {
-    $cached = get_transient( 'sa_vf_make_model_map' );
-    if ( is_array( $cached ) ) return $cached;
+function sa_vf_bump_index_version() {
+    static $done = false;
+    if ( $done ) return;
+    $done = true;
+    update_option( 'sa_vf_index_ver', sa_vf_index_version() + 1, false );
+}
 
-    $ids = get_posts( [
-        'post_type'      => 'product',
-        'post_status'    => 'publish',
-        'posts_per_page' => -1,
-        'fields'         => 'ids',
-        'no_found_rows'  => true,
-    ] );
+// Bump on any change to a vehicle: create/update/delete, term reassignment
+// (make/model/sold/…) and the image/price meta the importer rewrites.
+add_action( 'save_post_product',        'sa_vf_bump_index_version' );
+add_action( 'woocommerce_update_product','sa_vf_bump_index_version' );
+add_action( 'woocommerce_new_product',   'sa_vf_bump_index_version' );
+add_action( 'woocommerce_delete_product','sa_vf_bump_index_version' );
+add_action( 'woocommerce_trash_product', 'sa_vf_bump_index_version' );
+add_action( 'untrashed_post', function ( $post_id ) {
+    if ( get_post_type( $post_id ) === 'product' ) sa_vf_bump_index_version();
+} );
+add_action( 'set_object_terms', function ( $object_id ) {
+    if ( get_post_type( $object_id ) === 'product' ) sa_vf_bump_index_version();
+} );
+$sa_vf_meta_bump = function ( $meta_id, $post_id, $meta_key ) {
+    if ( in_array( $meta_key, [ '_price', '_thumbnail_id', '_product_image_gallery' ], true )
+        && get_post_type( $post_id ) === 'product' ) {
+        sa_vf_bump_index_version();
+    }
+};
+add_action( 'updated_post_meta', $sa_vf_meta_bump, 10, 3 );
+add_action( 'added_post_meta',   $sa_vf_meta_bump, 10, 3 );
+add_action( 'deleted_post_meta', function ( $meta_ids, $post_id, $meta_key ) {
+    if ( in_array( $meta_key, [ '_thumbnail_id', '_product_image_gallery' ], true )
+        && get_post_type( $post_id ) === 'product' ) {
+        sa_vf_bump_index_version();
+    }
+}, 10, 3 );
 
+/** The cached vehicle index (rows in catalogue/date-DESC order). */
+function sa_vf_index() {
+    static $mem = null;
+    if ( is_array( $mem ) ) return $mem; // one build per request
+
+    $ver    = sa_vf_index_version();
+    $cached = get_transient( 'sa_vf_index' );
+    if ( is_array( $cached ) && isset( $cached['ver'], $cached['rows'] ) && $cached['ver'] === $ver ) {
+        return $mem = $cached['rows'];
+    }
+
+    $rows = sa_vf_build_index();
+    set_transient( 'sa_vf_index', [ 'ver' => $ver, 'rows' => $rows ], DAY_IN_SECONDS );
+    return $mem = $rows;
+}
+
+/** The index keyed by product id, for O(1) lookups during sort/render. */
+function sa_vf_index_by_id() {
+    static $map = null;
+    if ( is_array( $map ) ) return $map;
     $map = [];
-    foreach ( $ids as $id ) {
-        $makes  = get_the_terms( $id, 'pa_make' );
-        $models = get_the_terms( $id, 'pa_model' );
-        if ( ! $makes || is_wp_error( $makes ) || ! $models || is_wp_error( $models ) ) continue;
-        foreach ( $makes as $mk ) {
-            if ( ! isset( $map[ $mk->slug ] ) ) $map[ $mk->slug ] = [];
-            foreach ( $models as $md ) {
-                $map[ $mk->slug ][ $md->slug ] = $md->name;
-            }
-        }
-    }
-    // Sort each make's models by name.
-    foreach ( $map as &$models ) {
-        asort( $models );
-    }
-    unset( $models );
-
-    set_transient( 'sa_vf_make_model_map', $map, 15 * MINUTE_IN_SECONDS );
+    foreach ( sa_vf_index() as $r ) $map[ $r['id'] ] = $r;
     return $map;
 }
 
-/** Resolve a km bucket key to the pa_kilometers term_ids whose value falls in range. */
-function sa_vf_km_term_ids( $bucket_key ) {
-    $bucket = null;
-    foreach ( sa_vf_km_buckets() as $b ) {
-        if ( $b['key'] === $bucket_key ) { $bucket = $b; break; }
-    }
-    if ( ! $bucket || ! taxonomy_exists( 'pa_kilometers' ) ) return [];
+/**
+ * Build the index in a handful of bulk queries (all terms in one call, all
+ * prices in one SQL) rather than per-product lookups. Runs only on a cache miss
+ * or right after an import, never on a normal filter request.
+ */
+function sa_vf_build_index() {
+    $ids = get_posts( [
+        'post_type'           => 'product',
+        'post_status'         => 'publish',
+        'posts_per_page'      => -1,
+        'fields'              => 'ids',
+        'no_found_rows'       => true,
+        'ignore_sticky_posts' => true,
+        'orderby'             => 'date',
+        'order'               => 'DESC',
+    ] );
+    if ( ! $ids ) return [];
 
-    $terms = get_terms( [ 'taxonomy' => 'pa_kilometers', 'hide_empty' => true ] );
-    if ( is_wp_error( $terms ) ) return [];
+    // Every taxonomy we need, fetched for all products in a single query.
+    $taxes = [];
+    foreach ( sa_vf_facets() as $f ) $taxes[] = $f['tax'];
+    $taxes = array_merge( $taxes, [ 'pa_kilometers', 'pa_sold', 'product_cat' ] );
+    $taxes = array_values( array_unique( array_filter( $taxes, 'taxonomy_exists' ) ) );
 
-    $ids = [];
-    foreach ( $terms as $t ) {
-        $km = (int) preg_replace( '/[^0-9]/', '', $t->name );
-        if ( $km >= $bucket['min'] && $km < $bucket['max'] ) {
-            $ids[] = (int) $t->term_id;
+    $by_obj = [];
+    if ( $taxes ) {
+        $terms = wp_get_object_terms( $ids, $taxes, [ 'fields' => 'all_with_object_id' ] );
+        if ( ! is_wp_error( $terms ) ) {
+            foreach ( $terms as $t ) {
+                $by_obj[ $t->object_id ][ $t->taxonomy ][] = $t;
+            }
         }
     }
-    return $ids;
+
+    // All monthly prices in one SQL.
+    global $wpdb;
+    $price_by_id = [];
+    $in = implode( ',', array_map( 'intval', $ids ) );
+    if ( $in !== '' ) {
+        $rows = $wpdb->get_results(
+            "SELECT post_id, meta_value FROM {$wpdb->postmeta}
+              WHERE meta_key = '_price' AND post_id IN ($in)"
+        );
+        foreach ( $rows as $row ) $price_by_id[ (int) $row->post_id ] = $row->meta_value;
+    }
+
+    // Memoise product_cat ancestor chains so a province term matches products
+    // filed under its area children (WooCommerce include_children behaviour).
+    $anc = [];
+    $ancestors = function ( $tid ) use ( &$anc ) {
+        if ( ! isset( $anc[ $tid ] ) ) $anc[ $tid ] = get_ancestors( $tid, 'product_cat', 'taxonomy' );
+        return $anc[ $tid ];
+    };
+
+    $num = function ( $name ) { return (int) preg_replace( '/[^0-9]/', '', (string) $name ); };
+
+    $index = [];
+    foreach ( $ids as $id ) {
+        $ot = $by_obj[ $id ] ?? [];
+
+        $facets = [];
+        foreach ( sa_vf_facets() as $f ) {
+            $slugs = [];
+            foreach ( ( $ot[ $f['tax'] ] ?? [] ) as $t ) $slugs[] = $t->slug;
+            if ( $slugs ) $facets[ $f['key'] ] = $slugs;
+        }
+
+        $km   = ! empty( $ot['pa_kilometers'] )  ? $num( reset( $ot['pa_kilometers'] )->name )  : null;
+        $year = ! empty( $ot['pa_vehicle-year'] ) ? $num( reset( $ot['pa_vehicle-year'] )->name ) : null;
+
+        $sold = false;
+        foreach ( ( $ot['pa_sold'] ?? [] ) as $t ) {
+            if ( strcasecmp( $t->name, 'Yes' ) === 0 ) { $sold = true; break; }
+        }
+
+        $cats = [];
+        foreach ( ( $ot['product_cat'] ?? [] ) as $t ) {
+            $cats[ (int) $t->term_id ] = true;
+            foreach ( $ancestors( $t->term_id ) as $a ) $cats[ (int) $a ] = true;
+        }
+
+        $price = ( array_key_exists( $id, $price_by_id ) && $price_by_id[ $id ] !== '' )
+            ? (float) $price_by_id[ $id ] : null;
+
+        $index[] = [
+            'id'     => (int) $id,
+            'price'  => $price,
+            'sold'   => $sold,
+            'km'     => $km,
+            'year'   => $year,
+            'facets' => $facets,
+            'cats'   => array_keys( $cats ),
+        ];
+    }
+    return $index;
 }
 
-/** Flush the cached facet/price/model data (call after an import). */
+/** Look up a monthly-payment / km bucket definition by its key (or null). */
+function sa_vf_price_bucket_by_key( $key ) {
+    if ( $key === '' ) return null;
+    foreach ( sa_vf_price_buckets() as $b ) if ( $b['key'] === $key ) return $b;
+    return null;
+}
+function sa_vf_km_bucket_by_key( $key ) {
+    if ( $key === '' ) return null;
+    foreach ( sa_vf_km_buckets() as $b ) if ( $b['key'] === $key ) return $b;
+    return null;
+}
+
+/**
+ * Flush + warm the index after the importer reindexes. Bumping first, then
+ * reading, rebuilds and re-caches at the new version so the first visitor after
+ * an import never waits for a cold build.
+ */
 function sa_vf_flush_caches() {
+    sa_vf_bump_index_version();
+    delete_transient( 'sa_vf_index' );
+    // Drop legacy caches from earlier versions of this file.
     delete_transient( 'sa_vf_price_bounds' );
     delete_transient( 'sa_vf_make_model_map' );
+    sa_vf_index(); // warm at the new version
 }
-// Piggyback on the importer's reindex signal so facets stay fresh.
+// Piggyback on the importer's reindex signal so the catalogue stays fresh.
 add_action( 'wbw_custom_index_cron', 'sa_vf_flush_caches' );
 
 /* ===========================================================================
@@ -252,13 +380,22 @@ function sa_vf_parse_args( array $src ) {
     $args = [
         'sort'     => 'featured',
         'page'     => 1,
-        'hide_sold'=> in_array( $str( 'hide_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
+        // "Available Only" is on by default — sold vehicles are hidden unless the
+        // visitor explicitly opts to show them (show_sold=1).
+        'hide_sold'=> ! in_array( $str( 'show_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
         'km'       => $str( 'km' ),
-        'price_min'=> ( $str( 'price_min' ) !== '' ) ? (int) $str( 'price_min' ) : null,
-        'price_max'=> ( $str( 'price_max' ) !== '' ) ? (int) $str( 'price_max' ) : null,
+        'price'    => '', // monthly-payment bucket key (see sa_vf_price_buckets)
         'category' => 0, // product_cat term the whole view is locked to (location archives)
         'facets'   => [],
     ];
+
+    // Monthly payment bucket — validated against the known set.
+    $price = $str( 'price' );
+    if ( $price !== '' ) {
+        foreach ( sa_vf_price_buckets() as $b ) {
+            if ( $b['key'] === $price ) { $args['price'] = $price; break; }
+        }
+    }
 
     // Category scope may arrive as a term id or slug; resolve to an id.
     $cat = $str( 'category' );
@@ -288,96 +425,42 @@ function sa_vf_parse_args( array $src ) {
     return $args;
 }
 
-/** Build the WP_Query tax/meta query and return matching product IDs (unpaginated). */
-function sa_vf_matching_ids( array $args ) {
-    $tax_query = [ 'relation' => 'AND' ];
+/**
+ * Filter the cached index to the rows matching $args. Pure in-memory work — the
+ * facets are ANDed, the price/km buckets are half-open [min, max) ranges, and
+ * the category match uses the pre-expanded ancestor set so a province term
+ * covers its area children.
+ */
+function sa_vf_filter_rows( array $args ) {
+    $rows   = sa_vf_index();
+    $facets = ! empty( $args['facets'] ) ? $args['facets'] : [];
+    $price  = sa_vf_price_bucket_by_key( $args['price'] ?? '' );
+    $km     = sa_vf_km_bucket_by_key( $args['km'] ?? '' );
+    $cat    = (int) ( $args['category'] ?? 0 );
+    $hide   = ! empty( $args['hide_sold'] );
 
-    foreach ( sa_vf_facets() as $facet ) {
-        $k = $facet['key'];
-        if ( ! empty( $args['facets'][ $k ] ) && taxonomy_exists( $facet['tax'] ) ) {
-            $tax_query[] = [
-                'taxonomy' => $facet['tax'],
-                'field'    => 'slug',
-                'terms'    => $args['facets'][ $k ],
-            ];
-        }
-    }
-
-    if ( ! empty( $args['km'] ) ) {
-        $km_ids = sa_vf_km_term_ids( $args['km'] );
-        // No terms in the bucket → guaranteed empty result.
-        $tax_query[] = $km_ids
-            ? [ 'taxonomy' => 'pa_kilometers', 'field' => 'term_id', 'terms' => $km_ids ]
-            : [ 'taxonomy' => 'pa_kilometers', 'field' => 'term_id', 'terms' => [ 0 ] ];
-    }
-
-    if ( $args['hide_sold'] && taxonomy_exists( 'pa_sold' ) ) {
-        $tax_query[] = [
-            'taxonomy' => 'pa_sold',
-            'field'    => 'name',
-            'terms'    => 'Yes',
-            'operator' => 'NOT IN',
-        ];
-    }
-
-    // Location scope (province/area archives). include_children=true so a
-    // province term also covers all of its area sub-terms.
-    if ( ! empty( $args['category'] ) ) {
-        $tax_query[] = [
-            'taxonomy'         => 'product_cat',
-            'field'            => 'term_id',
-            'terms'            => (int) $args['category'],
-            'include_children' => true,
-        ];
-    }
-
-    $meta_query = [];
-    if ( $args['price_min'] !== null || $args['price_max'] !== null ) {
-        $min = $args['price_min'] !== null ? $args['price_min'] : 0;
-        $max = $args['price_max'] !== null ? $args['price_max'] : PHP_INT_MAX;
-        $meta_query[] = [
-            'key'     => '_price',
-            'value'   => [ $min, $max ],
-            'compare' => 'BETWEEN',
-            'type'    => 'NUMERIC',
-        ];
-    }
-
-    $q_args = [
-        'post_type'      => 'product',
-        'post_status'    => 'publish',
-        'posts_per_page' => -1,
-        'fields'         => 'ids',
-        'no_found_rows'  => true,
-        'ignore_sticky_posts' => true,
-    ];
-    if ( count( $tax_query ) > 1 ) $q_args['tax_query']   = $tax_query;
-    if ( $meta_query )             $q_args['meta_query']  = $meta_query;
-
-    $q = new WP_Query( $q_args );
-    return $q->posts;
-}
-
-/** Distinct term slugs present across a set of product IDs for a taxonomy. */
-function sa_vf_distinct_term_slugs( array $ids, $taxonomy ) {
-    if ( ! $ids || ! taxonomy_exists( $taxonomy ) ) return [];
-    $slugs = wp_get_object_terms( $ids, $taxonomy, [ 'fields' => 'slugs' ] );
-    return is_wp_error( $slugs ) ? [] : array_values( array_unique( $slugs ) );
-}
-
-/** Which km buckets are represented across a set of product IDs. */
-function sa_vf_available_km_buckets( array $ids ) {
-    if ( ! $ids || ! taxonomy_exists( 'pa_kilometers' ) ) return [];
-    $names = wp_get_object_terms( $ids, 'pa_kilometers', [ 'fields' => 'names' ] );
-    if ( is_wp_error( $names ) ) return [];
     $out = [];
-    foreach ( sa_vf_km_buckets() as $b ) {
-        foreach ( $names as $name ) {
-            $km = (int) preg_replace( '/[^0-9]/', '', $name );
-            if ( $km >= $b['min'] && $km < $b['max'] ) { $out[] = $b['key']; break; }
+    foreach ( $rows as $r ) {
+        if ( $hide && $r['sold'] ) continue;
+        if ( $cat && ! in_array( $cat, $r['cats'], true ) ) continue;
+        if ( $price && ( $r['price'] === null || $r['price'] < $price['min'] || $r['price'] >= $price['max'] ) ) continue;
+        if ( $km && ( $r['km'] === null || $r['km'] < $km['min'] || $r['km'] >= $km['max'] ) ) continue;
+
+        $ok = true;
+        foreach ( $facets as $k => $slug ) {
+            if ( $slug === '' ) continue;
+            if ( ! in_array( $slug, $r['facets'][ $k ] ?? [], true ) ) { $ok = false; break; }
         }
+        if ( $ok ) $out[] = $r;
     }
     return $out;
+}
+
+/** Matching product IDs (unpaginated), in catalogue order. */
+function sa_vf_matching_ids( array $args ) {
+    $ids = [];
+    foreach ( sa_vf_filter_rows( $args ) as $r ) $ids[] = $r['id'];
+    return $ids;
 }
 
 /**
@@ -386,30 +469,41 @@ function sa_vf_available_km_buckets( array $ids ) {
  * it). Powers hiding impossible options in the dropdowns.
  */
 function sa_vf_available( array $args ) {
-    $full_ids = sa_vf_matching_ids( $args );
-    $avail    = [];
+    $full  = sa_vf_filter_rows( $args );
+    $avail = [];
 
     foreach ( sa_vf_facets() as $facet ) {
         $k = $facet['key'];
         if ( ! empty( $args['facets'][ $k ] ) ) {
             $a2 = $args;
             unset( $a2['facets'][ $k ] ); // ignore this facet's own selection
-            $ids = sa_vf_matching_ids( $a2 );
+            $rows = sa_vf_filter_rows( $a2 );
         } else {
-            $ids = $full_ids;
+            $rows = $full;
         }
-        $avail[ $k ] = sa_vf_distinct_term_slugs( $ids, $facet['tax'] );
+        $slugs = [];
+        foreach ( $rows as $r ) {
+            foreach ( ( $r['facets'][ $k ] ?? [] ) as $s ) $slugs[ $s ] = 1;
+        }
+        $avail[ $k ] = array_keys( $slugs );
     }
 
     // Km buckets (exclude the km selection itself).
-    if ( $args['km'] !== '' ) {
+    if ( ( $args['km'] ?? '' ) !== '' ) {
         $a2 = $args;
         $a2['km'] = '';
-        $km_ids = sa_vf_matching_ids( $a2 );
+        $rows = sa_vf_filter_rows( $a2 );
     } else {
-        $km_ids = $full_ids;
+        $rows = $full;
     }
-    $avail['km'] = sa_vf_available_km_buckets( $km_ids );
+    $km_set = [];
+    foreach ( $rows as $r ) {
+        if ( $r['km'] === null ) continue;
+        foreach ( sa_vf_km_buckets() as $b ) {
+            if ( $r['km'] >= $b['min'] && $r['km'] < $b['max'] ) { $km_set[ $b['key'] ] = 1; break; }
+        }
+    }
+    $avail['km'] = array_keys( $km_set );
 
     return $avail;
 }
@@ -422,41 +516,29 @@ function sa_vf_term_num( $id, $taxonomy ) {
     return (int) preg_replace( '/[^0-9]/', '', $t->name );
 }
 
-/** Sort matching IDs in-PHP (catalogue is small) honouring the sort key + sold-last. */
+/** Sort matching IDs from the index (no DB) honouring the sort key + sold-last. */
 function sa_vf_sort_ids( array $ids, $sort ) {
-    // Pre-compute the keys once.
-    $meta = [];
-    foreach ( $ids as $i => $id ) {
-        $meta[ $id ] = [
-            'price' => (float) get_post_meta( $id, '_price', true ),
-            'order' => $i, // original (featured/menu) order fallback
-        ];
-    }
-    if ( in_array( $sort, [ 'year_desc', 'year_asc' ], true ) ) {
-        foreach ( $ids as $id ) $meta[ $id ]['year'] = (int) sa_vf_term_num( $id, 'pa_vehicle-year' );
-    }
-    if ( $sort === 'km_asc' ) {
-        foreach ( $ids as $id ) $meta[ $id ]['km'] = (int) sa_vf_term_num( $id, 'pa_kilometers' );
-    }
+    $map = sa_vf_index_by_id();
+    $pos = array_flip( $ids ); // incoming catalogue order → 'featured' fallback
 
-    // Sold-last: sold vehicles always sink below available ones.
-    $sold = [];
-    foreach ( $ids as $id ) {
-        $terms = get_the_terms( $id, 'pa_sold' );
-        $sold[ $id ] = ( $terms && ! is_wp_error( $terms ) && strcasecmp( reset( $terms )->name, 'Yes' ) === 0 ) ? 1 : 0;
-    }
+    usort( $ids, function ( $a, $b ) use ( $map, $pos, $sort ) {
+        $ra = $map[ $a ] ?? null;
+        $rb = $map[ $b ] ?? null;
 
-    usort( $ids, function ( $a, $b ) use ( $meta, $sold, $sort ) {
-        if ( $sold[ $a ] !== $sold[ $b ] ) return $sold[ $a ] <=> $sold[ $b ];
+        // Sold-last: sold vehicles always sink below available ones.
+        $sa = ( $ra && $ra['sold'] ) ? 1 : 0;
+        $sb = ( $rb && $rb['sold'] ) ? 1 : 0;
+        if ( $sa !== $sb ) return $sa <=> $sb;
+
         switch ( $sort ) {
-            case 'price_asc':  return $meta[ $a ]['price'] <=> $meta[ $b ]['price'];
-            case 'price_desc': return $meta[ $b ]['price'] <=> $meta[ $a ]['price'];
-            case 'year_desc':  return $meta[ $b ]['year']  <=> $meta[ $a ]['year'];
-            case 'year_asc':   return $meta[ $a ]['year']  <=> $meta[ $b ]['year'];
-            case 'km_asc':     return $meta[ $a ]['km']    <=> $meta[ $b ]['km'];
+            case 'price_asc':  return (float) ( $ra['price'] ?? 0 ) <=> (float) ( $rb['price'] ?? 0 );
+            case 'price_desc': return (float) ( $rb['price'] ?? 0 ) <=> (float) ( $ra['price'] ?? 0 );
+            case 'year_desc':  return (int)   ( $rb['year']  ?? 0 ) <=> (int)   ( $ra['year']  ?? 0 );
+            case 'year_asc':   return (int)   ( $ra['year']  ?? 0 ) <=> (int)   ( $rb['year']  ?? 0 );
+            case 'km_asc':     return (int)   ( $ra['km']    ?? 0 ) <=> (int)   ( $rb['km']    ?? 0 );
             case 'newest':     return $b <=> $a; // higher post ID = more recent
             case 'featured':
-            default:           return $meta[ $a ]['order'] <=> $meta[ $b ]['order'];
+            default:           return ( $pos[ $a ] ?? 0 ) <=> ( $pos[ $b ] ?? 0 );
         }
     } );
     return $ids;
@@ -523,10 +605,17 @@ function sa_vf_render_card( $id ) {
         : wc_placeholder_img_src( 'woocommerce_thumbnail' );
     $hover = $hover_id ? wp_get_attachment_image_url( $hover_id, 'woocommerce_thumbnail' ) : $img;
 
-    $km_val = sa_vf_term_num( $id, 'pa_kilometers' );
-
-    $sold_terms = get_the_terms( $id, 'pa_sold' );
-    $is_sold = $sold_terms && ! is_wp_error( $sold_terms ) && strcasecmp( reset( $sold_terms )->name, 'Yes' ) === 0;
+    // Prefer the pre-computed index (no extra term queries); fall back to a
+    // direct lookup for any id that isn't a published vehicle in the index.
+    $row = sa_vf_index_by_id()[ $id ] ?? null;
+    if ( $row ) {
+        $km_val  = $row['km'];
+        $is_sold = $row['sold'];
+    } else {
+        $km_val     = sa_vf_term_num( $id, 'pa_kilometers' );
+        $sold_terms = get_the_terms( $id, 'pa_sold' );
+        $is_sold    = $sold_terms && ! is_wp_error( $sold_terms ) && strcasecmp( reset( $sold_terms )->name, 'Yes' ) === 0;
+    }
 
     $has_hover = $hover && $hover !== $img;
 
@@ -572,15 +661,47 @@ function sa_vf_render_card( $id ) {
 add_action( 'wp_ajax_sa_vf_query',        'sa_vf_ajax_query' );
 add_action( 'wp_ajax_nopriv_sa_vf_query', 'sa_vf_ajax_query' );
 
+/** Cache key for a query payload — the index version + the output-affecting args. */
+function sa_vf_payload_key( array $args ) {
+    $facets = $args['facets'] ?? [];
+    ksort( $facets );
+    $norm = [
+        'sort'      => $args['sort'] ?? 'featured',
+        'page'      => (int) ( $args['page'] ?? 1 ),
+        'hide_sold' => ! empty( $args['hide_sold'] ) ? 1 : 0,
+        'km'        => $args['km'] ?? '',
+        'price'     => $args['price'] ?? '',
+        'category'  => (int) ( $args['category'] ?? 0 ),
+        'facets'    => $facets,
+    ];
+    return 'sa_vf_pl_' . sa_vf_index_version() . '_' . md5( wp_json_encode( $norm ) );
+}
+
+/**
+ * The full response (results HTML + available options) for a set of args,
+ * cached per index-version so repeated/identical requests — paging, toggling
+ * back and forth, common filter combos — return instantly without re-rendering.
+ * Invalidated automatically when the index version bumps (i.e. on any vehicle
+ * change), so it never serves stale stock.
+ */
+function sa_vf_payload( array $args ) {
+    $key    = sa_vf_payload_key( $args );
+    $cached = get_transient( $key );
+    if ( is_array( $cached ) ) return $cached;
+
+    $result = sa_vf_run_query( $args );
+    $result['available'] = sa_vf_available( $args );
+    set_transient( $key, $result, 30 * MINUTE_IN_SECONDS );
+    return $result;
+}
+
 function sa_vf_ajax_query() {
     // Public, read-only endpoint (only surfaces already-public published
     // products) — mirrors the /qualified-vehicles REST route. Not nonce-gated
     // so it keeps working behind full-page caching where a localized nonce
     // would otherwise go stale and 403 every filter request.
-    $args   = sa_vf_parse_args( $_POST );
-    $result = sa_vf_run_query( $args );
-    $result['available'] = sa_vf_available( $args );
-    wp_send_json_success( $result );
+    $args = sa_vf_parse_args( $_POST );
+    wp_send_json_success( sa_vf_payload( $args ) );
 }
 
 /* ===========================================================================
@@ -652,8 +773,9 @@ function sa_vf_shortcode( $atts ) {
         $initial['category'] = $scope['category'];
     }
 
-    $result = sa_vf_run_query( $initial );
-    $bounds = sa_vf_price_bounds();
+    // Same cached payload the AJAX endpoint returns, so the first paint is
+    // instant and the availability map is computed once, not twice.
+    $result = sa_vf_payload( $initial );
 
     // On a category page the Region dropdown navigates between location
     // archives (scoped to the current province) instead of filtering.
@@ -662,8 +784,7 @@ function sa_vf_shortcode( $atts ) {
     wp_localize_script( 'sa-vehicle-filter', 'SA_VF', [
         'ajax_url'   => admin_url( 'admin-ajax.php' ),
         'nonce'      => wp_create_nonce( 'sa_vf' ),
-        'price'      => $bounds,
-        'available'  => sa_vf_available( $initial ), // options still possible on load
+        'available'  => $result['available'], // options still possible on load
         'per_page'   => (int) SA_VF_PER_PAGE,
         'sort'       => sa_vf_sort_options(),
         'category'   => (int) $initial['category'], // keeps AJAX requests locked to the location
