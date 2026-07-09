@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.0
+Stable tag: 2.6.1
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.1 =
+* **Region filters by location category, not the attribute.** The Region dropdown now filters on the product-category location tree the importer assigns (province → area) instead of the `pa_region` product attribute. Choosing a parent province (e.g. Gauteng) now correctly returns vehicles in all of its child areas (Sandton, Pretoria, …), and the dropdown lists provinces with their areas indented beneath them. On the location archive pages the Region field keeps behaving as the province navigator.
+* **Cache busts on plugin update.** The index and browser dataset caches now key on the plugin's asset version as well as the data version, so a plugin update that changes their shape refreshes them on the next page load instead of waiting for the next stock change.
 
 = 2.6.0 =
 Makes the vehicle filter instant on any host by moving filtering into the browser.

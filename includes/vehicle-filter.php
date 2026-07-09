@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.8.0' );
+    define( 'SA_VF_VERSION', '1.8.1' );
 }
 
 /**
@@ -29,12 +29,54 @@ function sa_vf_facets() {
         [ 'key' => 'condition',    'label' => 'New or Used',  'tax' => 'pa_new-or-used' ],
         [ 'key' => 'make',         'label' => 'Make',         'tax' => 'pa_make' ],
         [ 'key' => 'model',        'label' => 'Model',        'tax' => 'pa_model' ],
-        [ 'key' => 'region',       'label' => 'Region',       'tax' => 'pa_region' ],
+        // Region filters on the product_cat location tree (province → area) the
+        // importer assigns, not the pa_region attribute — so choosing a province
+        // includes every area beneath it. `category => true` marks it as a
+        // category filter (matched against a vehicle's expanded category set)
+        // rather than a WooCommerce attribute.
+        [ 'key' => 'region',       'label' => 'Region',       'tax' => 'product_cat', 'category' => true ],
         [ 'key' => 'transmission', 'label' => 'Transmission', 'tax' => 'pa_transmission' ],
         [ 'key' => 'body_type',    'label' => 'Body Type',    'tax' => 'pa_vehicle-type' ],
         [ 'key' => 'fuel',         'label' => 'Fuel',         'tax' => 'pa_fuel' ],
         [ 'key' => 'year',         'label' => 'Year Model',   'tax' => 'pa_vehicle-year' ],
     ];
+}
+
+/**
+ * Location categories as a flat, hierarchical option list for the Region
+ * dropdown: each top-level province (depth 0) followed by its areas (depth 1).
+ * Values are product_cat term ids. Excludes WooCommerce's default category.
+ */
+function sa_vf_region_options() {
+    if ( ! taxonomy_exists( 'product_cat' ) ) return [];
+    $provinces = get_terms( [
+        'taxonomy'   => 'product_cat',
+        'parent'     => 0,
+        'hide_empty' => true,
+        'orderby'    => 'name',
+        'order'      => 'ASC',
+    ] );
+    if ( is_wp_error( $provinces ) || ! $provinces ) return [];
+
+    $out = [];
+    foreach ( $provinces as $prov ) {
+        if ( $prov->slug === 'uncategorized' ) continue;
+        $out[] = [ 'id' => (int) $prov->term_id, 'name' => $prov->name, 'depth' => 0 ];
+
+        $areas = get_terms( [
+            'taxonomy'   => 'product_cat',
+            'parent'     => $prov->term_id,
+            'hide_empty' => true,
+            'orderby'    => 'name',
+            'order'      => 'ASC',
+        ] );
+        if ( ! is_wp_error( $areas ) ) {
+            foreach ( $areas as $a ) {
+                $out[] = [ 'id' => (int) $a->term_id, 'name' => $a->name, 'depth' => 1 ];
+            }
+        }
+    }
+    return $out;
 }
 
 /**
@@ -172,6 +214,15 @@ function sa_vf_index_version() {
 }
 
 /**
+ * Cache-key version: the data version plus the asset/schema version, so a plugin
+ * update that changes the index shape invalidates a still-warm cache on deploy
+ * (not just on the next vehicle change).
+ */
+function sa_vf_cache_version() {
+    return sa_vf_index_version() . '-' . SA_VF_VERSION;
+}
+
+/**
  * Invalidate the index. Debounced to one bump per request via a static guard so
  * a bulk import touching hundreds of products only stamps a single new version
  * (the rebuild itself is lazy — it happens on the next read, not here).
@@ -216,7 +267,7 @@ function sa_vf_index() {
     static $mem = null;
     if ( is_array( $mem ) ) return $mem; // one build per request
 
-    $ver  = sa_vf_index_version();
+    $ver  = sa_vf_cache_version();
     $rows = sa_vf_index_read( $ver );
     if ( $rows === null ) {
         $rows = sa_vf_build_index();
@@ -280,7 +331,7 @@ function sa_vf_client_data() {
     static $mem = null;
     if ( is_array( $mem ) ) return $mem;
 
-    $ver  = sa_vf_index_version();
+    $ver  = sa_vf_cache_version();
     $rows = sa_vf_blob_read( 'sa_vf_client', $ver );
     if ( $rows === null ) {
         $rows = [];
@@ -385,6 +436,7 @@ function sa_vf_build_index() {
 
         $facets = [];
         foreach ( sa_vf_facets() as $f ) {
+            if ( ! empty( $f['category'] ) ) continue; // Region matches on cats, below
             $slugs = [];
             foreach ( ( $ot[ $f['tax'] ] ?? [] ) as $t ) $slugs[] = $t->slug;
             if ( $slugs ) $facets[ $f['key'] ] = $slugs;
@@ -485,9 +537,10 @@ add_action( 'admin_init', function () {
         return;
     }
 
-    $ms  = function ( $t ) { return sprintf( '%.1f ms', $t * 1000 ); };
-    $ver = sa_vf_index_version();
-    $out = [];
+    $ms   = function ( $t ) { return sprintf( '%.1f ms', $t * 1000 ); };
+    $ver  = sa_vf_index_version(); // numeric data version (for display)
+    $cver = sa_vf_cache_version(); // composite key used for cache freshness
+    $out  = [];
 
     $out[] = 'SA Motorlease — vehicle filter diagnostics';
     $out[] = str_repeat( '=', 52 );
@@ -500,9 +553,9 @@ add_action( 'admin_init', function () {
     // requests)? This is read before anything rebuilds, so it reflects what an
     // AJAX request would see.
     $t0    = microtime( true );
-    $fresh = sa_vf_index_read( $ver ) !== null;
+    $fresh = sa_vf_index_read( $cver ) !== null;
     $tread = microtime( true ) - $t0;
-    $out[] = sprintf( 'Index version: %d', $ver );
+    $out[] = sprintf( 'Index version: %d (cache key %s)', $ver, $cver );
     $out[] = 'Cached index fresh & reusable: ' . ( $fresh
         ? 'YES — served from cache (' . $ms( $tread ) . ' to read)'
         : 'NO — every request rebuilds it  <<< this is the problem' );
@@ -525,8 +578,8 @@ add_action( 'admin_init', function () {
                 $d = is_string( $b ) ? @unserialize( $b ) : false;
                 if ( is_array( $d ) && isset( $d['ver'] ) ) $sver = (string) $d['ver'];
             }
-            $out[] = sprintf( '  → raw transient in wp_options: present, stored at version %s vs current %d %s',
-                $sver, $ver, ( $sver !== (string) $ver ) ? '(VERSION MISMATCH — a hook is bumping it)' : '(same version — cleared between requests?)' );
+            $out[] = sprintf( '  → raw transient in wp_options: present, stored at version %s vs current %s %s',
+                $sver, $cver, ( $sver !== (string) $cver ) ? '(VERSION MISMATCH — a hook is bumping it)' : '(same version — cleared between requests?)' );
         }
     }
 
@@ -612,6 +665,7 @@ function sa_vf_parse_args( array $src ) {
         'hide_sold'=> ! in_array( $str( 'show_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
         'km'       => $str( 'km' ),
         'price'    => '', // monthly-payment bucket key (see sa_vf_price_buckets)
+        'region'   => 0, // product_cat location term the visitor chose in the Region filter
         'category' => 0, // product_cat term the whole view is locked to (location archives)
         'facets'   => [],
     ];
@@ -644,6 +698,14 @@ function sa_vf_parse_args( array $src ) {
         $args['page'] = max( 1, (int) $page );
     }
     foreach ( sa_vf_facets() as $facet ) {
+        // Region (category facet) is a product_cat term id, handled below.
+        if ( ! empty( $facet['category'] ) ) {
+            $val = $str( $facet['key'] );
+            if ( $val !== '' && ctype_digit( $val ) && term_exists( (int) $val, 'product_cat' ) ) {
+                $args['region'] = (int) $val;
+            }
+            continue;
+        }
         $val = $str( $facet['key'] );
         if ( $val !== '' ) {
             $args['facets'][ $facet['key'] ] = sanitize_title( $val );
@@ -663,6 +725,7 @@ function sa_vf_filter_rows( array $args ) {
     $facets = ! empty( $args['facets'] ) ? $args['facets'] : [];
     $price  = sa_vf_price_bucket_by_key( $args['price'] ?? '' );
     $km     = sa_vf_km_bucket_by_key( $args['km'] ?? '' );
+    $region = (int) ( $args['region'] ?? 0 );
     $cat    = (int) ( $args['category'] ?? 0 );
     $hide   = ! empty( $args['hide_sold'] );
 
@@ -670,6 +733,9 @@ function sa_vf_filter_rows( array $args ) {
     foreach ( $rows as $r ) {
         if ( $hide && $r['sold'] ) continue;
         if ( $cat && ! in_array( $cat, $r['cats'], true ) ) continue;
+        // Region: the chosen province/area (and its children, via the expanded
+        // cats) must be one of the vehicle's location categories.
+        if ( $region && ! in_array( $region, $r['cats'], true ) ) continue;
         if ( $price && ( $r['price'] === null || $r['price'] < $price['min'] || $r['price'] >= $price['max'] ) ) continue;
         if ( $km && ( $r['km'] === null || $r['km'] < $km['min'] || $r['km'] >= $km['max'] ) ) continue;
 
@@ -701,6 +767,7 @@ function sa_vf_available( array $args ) {
 
     foreach ( sa_vf_facets() as $facet ) {
         $k = $facet['key'];
+        if ( ! empty( $facet['category'] ) ) continue; // Region handled below
         if ( ! empty( $args['facets'][ $k ] ) ) {
             $a2 = $args;
             unset( $a2['facets'][ $k ] ); // ignore this facet's own selection
@@ -714,6 +781,20 @@ function sa_vf_available( array $args ) {
         }
         $avail[ $k ] = array_keys( $slugs );
     }
+
+    // Region (location categories still reachable, excluding its own selection).
+    if ( ! empty( $args['region'] ) ) {
+        $a2 = $args;
+        $a2['region'] = 0;
+        $rows = sa_vf_filter_rows( $a2 );
+    } else {
+        $rows = $full;
+    }
+    $region_set = [];
+    foreach ( $rows as $r ) {
+        foreach ( $r['cats'] as $cid ) $region_set[ (string) $cid ] = 1;
+    }
+    $avail['region'] = array_keys( $region_set );
 
     // Km buckets (exclude the km selection itself).
     if ( ( $args['km'] ?? '' ) !== '' ) {
@@ -916,10 +997,11 @@ function sa_vf_payload_key( array $args ) {
         'hide_sold' => ! empty( $args['hide_sold'] ) ? 1 : 0,
         'km'        => $args['km'] ?? '',
         'price'     => $args['price'] ?? '',
+        'region'    => (int) ( $args['region'] ?? 0 ),
         'category'  => (int) ( $args['category'] ?? 0 ),
         'facets'    => $facets,
     ];
-    return 'sa_vf_pl_' . sa_vf_index_version() . '_' . md5( wp_json_encode( $norm ) );
+    return 'sa_vf_pl_' . sa_vf_cache_version() . '_' . md5( wp_json_encode( $norm ) );
 }
 
 /**

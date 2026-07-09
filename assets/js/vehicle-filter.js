@@ -50,17 +50,18 @@
         return val >= b.min && val < max;
     }
     function cloneArgs(a) {
-        return { facets: Object.assign({}, a.facets), price: a.price, km: a.km, hideSold: a.hideSold, sort: a.sort };
+        return { facets: Object.assign({}, a.facets), price: a.price, km: a.km, region: a.region, hideSold: a.hideSold, sort: a.sort };
     }
     function withArg(a, k, v) { var c = cloneArgs(a); c[k] = v; return c; }
 
     /** Read the current filter state from the form controls. */
     function collect() {
-        var a = { facets: {}, price: '', km: '', hideSold: true, sort: 'featured' };
+        var a = { facets: {}, price: '', km: '', region: '', hideSold: true, sort: 'featured' };
         form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
             var k = s.getAttribute('data-facet');
-            if (k === 'price') { a.price = s.value; return; }
-            if (k === 'km')    { a.km = s.value; return; }
+            if (k === 'price')  { a.price = s.value; return; }
+            if (k === 'km')     { a.km = s.value; return; }
+            if (k === 'region') { a.region = s.value; return; } // product_cat term id
             if (s.value) a.facets[k] = s.value;
         });
         // "Available Only" checked (default) hides sold; unchecking shows them.
@@ -73,9 +74,13 @@
     function filterData(a) {
         var pb = bucketByKey(PB, a.price), kb = bucketByKey(KB, a.km);
         var fk = Object.keys(a.facets);
+        var region = a.region ? Number(a.region) : 0;
         return DATA.filter(function (v) {
             if (a.hideSold && v.sold) return false;
             if (CAT && v.c.indexOf(CAT) === -1) return false;
+            // Region: chosen province/area must be one of the vehicle's location
+            // categories. v.c includes ancestors, so a province matches its areas.
+            if (region && v.c.indexOf(region) === -1) return false;
             if (pb && !inBucket(v.price, pb)) return false;
             if (kb && !inBucket(v.km, kb)) return false;
             for (var i = 0; i < fk.length; i++) {
@@ -136,6 +141,13 @@
                 av.price = bucketsPresent(rows, PB, 'price');
                 return;
             }
+            if (k === 'region') {
+                rows = a.region ? filterData(withArg(a, 'region', '')) : full;
+                var cs = {};
+                rows.forEach(function (v) { v.c.forEach(function (cid) { cs[cid] = 1; }); });
+                av.region = Object.keys(cs); // stringified term ids, matched against option.value
+                return;
+            }
             if (a.facets[k]) {
                 var a2 = cloneArgs(a); delete a2.facets[k]; rows = filterData(a2);
             } else {
@@ -154,6 +166,7 @@
         Object.keys(a.facets).forEach(function (k) { if (a.facets[k]) qs.set(k, a.facets[k]); });
         if (a.price) qs.set('price', a.price);
         if (a.km) qs.set('km', a.km);
+        if (a.region) qs.set('region', a.region);
         if (!a.hideSold) qs.set('show_sold', '1');
         if (a.sort && a.sort !== 'featured') qs.set('sort', a.sort);
         var url = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
