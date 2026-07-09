@@ -216,15 +216,54 @@ function sa_vf_index() {
     static $mem = null;
     if ( is_array( $mem ) ) return $mem; // one build per request
 
-    $ver    = sa_vf_index_version();
-    $cached = get_transient( 'sa_vf_index' );
-    if ( is_array( $cached ) && isset( $cached['ver'], $cached['rows'] ) && $cached['ver'] === $ver ) {
-        return $mem = $cached['rows'];
+    $ver  = sa_vf_index_version();
+    $rows = sa_vf_index_read( $ver );
+    if ( $rows === null ) {
+        $rows = sa_vf_build_index();
+        sa_vf_index_write( $rows, $ver );
+    }
+    return $mem = $rows;
+}
+
+/**
+ * Decode the cached index, or null on miss/stale. The value is stored as a
+ * compressed, base64-encoded string (prefix "g:") — small enough to survive
+ * object-cache value-size limits (e.g. Memcached's ~1 MB cap, which would
+ * otherwise drop the index and force a rebuild on every request) and ASCII-safe
+ * for the wp_options longtext column. "r:" is the uncompressed fallback.
+ */
+function sa_vf_index_read( $ver ) {
+    $blob = get_transient( 'sa_vf_index' );
+    if ( ! is_string( $blob ) || strlen( $blob ) < 2 ) return null;
+
+    $tag  = substr( $blob, 0, 2 );
+    $body = substr( $blob, 2 );
+    if ( $tag === 'g:' ) {
+        if ( ! function_exists( 'gzuncompress' ) ) return null;
+        $body = @gzuncompress( (string) base64_decode( $body ) );
+        if ( $body === false ) return null;
+    } elseif ( $tag !== 'r:' ) {
+        return null;
     }
 
-    $rows = sa_vf_build_index();
-    set_transient( 'sa_vf_index', [ 'ver' => $ver, 'rows' => $rows ], DAY_IN_SECONDS );
-    return $mem = $rows;
+    $data = @unserialize( $body );
+    if ( ! is_array( $data ) || ! isset( $data['ver'], $data['rows'] ) || $data['ver'] !== $ver ) {
+        return null;
+    }
+    return $data['rows'];
+}
+
+/** Store the index, compressed when zlib is available. */
+function sa_vf_index_write( array $rows, $ver ) {
+    $body = serialize( [ 'ver' => $ver, 'rows' => $rows ] );
+    if ( function_exists( 'gzcompress' ) ) {
+        $z = gzcompress( $body, 6 );
+        if ( $z !== false ) {
+            set_transient( 'sa_vf_index', 'g:' . base64_encode( $z ), DAY_IN_SECONDS );
+            return;
+        }
+    }
+    set_transient( 'sa_vf_index', 'r:' . $body, DAY_IN_SECONDS );
 }
 
 /** The index keyed by product id, for O(1) lookups during sort/render. */
@@ -380,6 +419,98 @@ add_action( 'admin_init', function () {
             sa_vf_index_version()
         ) ),
         'Index rebuilt',
+        [ 'response' => 200 ]
+    );
+} );
+
+/**
+ * Timing diagnostic for admins: visit any wp-admin URL with ?sa_vf_diag=1 to
+ * see where a filter request spends its time and — crucially — whether the
+ * cached index is actually being reused between requests or rebuilt every time.
+ * Reload the page: if "Index version" climbs on its own, something is bumping
+ * the version on every request (constant rebuild).
+ */
+add_action( 'admin_init', function () {
+    if ( empty( $_GET['sa_vf_diag'] ) || ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+
+    $ms  = function ( $t ) { return sprintf( '%.1f ms', $t * 1000 ); };
+    $ver = sa_vf_index_version();
+    $out = [];
+
+    $out[] = 'SA Motorlease — vehicle filter diagnostics';
+    $out[] = str_repeat( '=', 52 );
+
+    // Is a persistent object cache in play (Redis/Memcached, with size limits)?
+    $ext = function_exists( 'wp_using_ext_object_cache' ) && wp_using_ext_object_cache();
+    $out[] = 'Persistent object cache: ' . ( $ext ? 'YES (Redis/Memcached or similar)' : 'no — transients live in wp_options' );
+
+    // Is the cached index present and fresh RIGHT NOW (i.e. reused across
+    // requests)? This is read before anything rebuilds, so it reflects what an
+    // AJAX request would see.
+    $t0    = microtime( true );
+    $fresh = sa_vf_index_read( $ver ) !== null;
+    $tread = microtime( true ) - $t0;
+    $out[] = sprintf( 'Index version: %d', $ver );
+    $out[] = 'Cached index fresh & reusable: ' . ( $fresh
+        ? 'YES — served from cache (' . $ms( $tread ) . ' to read)'
+        : 'NO — every request rebuilds it  <<< this is the problem' );
+
+    // Cold build cost + size.
+    $t0       = microtime( true );
+    $rows     = sa_vf_build_index();
+    $build    = microtime( true ) - $t0;
+    $ser      = serialize( $rows );
+    $raw_kb   = strlen( $ser ) / 1024;
+    $gz_kb    = function_exists( 'gzcompress' ) ? strlen( gzcompress( $ser, 6 ) ) / 1024 : -1;
+    $out[]    = sprintf( 'Vehicles indexed: %d', count( $rows ) );
+    $out[]    = 'Index build (cold): ' . $ms( $build );
+    $out[]    = sprintf( 'Index size: %.0f KB raw%s', $raw_kb, $gz_kb >= 0 ? sprintf( ' / %.0f KB gzipped', $gz_kb ) : '' );
+
+    // Does the actual (compressed) index blob persist in the cache backend?
+    // (Memcached silently drops values over ~1 MB, which would force a rebuild
+    // each request.) Test the exact string sa_vf_index_write() would store.
+    $body   = serialize( [ 'ver' => $ver, 'rows' => $rows ] );
+    $stored = function_exists( 'gzcompress' ) ? 'g:' . base64_encode( gzcompress( $body, 6 ) ) : 'r:' . $body;
+    set_transient( 'sa_vf_diag_probe', $stored, 120 );
+    $rt        = get_transient( 'sa_vf_diag_probe' );
+    $persisted = is_string( $rt ) && $rt === $stored;
+    delete_transient( 'sa_vf_diag_probe' );
+    $out[] = sprintf( 'Stored index blob: %.0f KB (what actually goes in the cache)', strlen( $stored ) / 1024 );
+    $out[] = 'That blob round-trips through the cache: ' . ( $persisted
+        ? 'OK — the cache keeps it'
+        : 'FAILED — the cache is dropping it (size limit?) <<< forces rebuild every request' );
+
+    // Per-request query timings with the index warm.
+    $args = sa_vf_parse_args( [] );
+    $t0 = microtime( true ); $ids = sa_vf_matching_ids( $args ); $tfilter = microtime( true ) - $t0;
+    $t0 = microtime( true ); $ids = sa_vf_sort_ids( $ids, 'featured' ); $tsort = microtime( true ) - $t0;
+    $t0 = microtime( true ); $av  = sa_vf_available( $args ); $tavail = microtime( true ) - $t0;
+    $t0 = microtime( true ); $res = sa_vf_run_query( $args ); $trun = microtime( true ) - $t0;
+    $out[] = '';
+    $out[] = 'Per-request work (default view, index warm):';
+    $out[] = '  match/filter: ' . $ms( $tfilter );
+    $out[] = '  sort:         ' . $ms( $tsort );
+    $out[] = '  availability: ' . $ms( $tavail );
+    $out[] = '  run_query (+ 15-card render): ' . $ms( $trun );
+    $out[] = sprintf( '  results: %d', $res['total'] );
+
+    $pk    = sa_vf_payload_key( $args );
+    $out[] = 'Response cache for default view: ' . ( get_transient( $pk ) !== false ? 'present' : 'absent' );
+
+    $out[] = '';
+    $out[] = 'How to read this:';
+    $out[] = '  • "Cached index fresh" = NO, or "round-trips" = FAILED → the index';
+    $out[] = '     is rebuilt every request; that build time is your 3–5s.';
+    $out[] = '  • Everything fast here but the live filter still slow → the cost is';
+    $out[] = '     WordPress/admin-ajax bootstrap (theme + other plugins), not this code.';
+    $out[] = '  • Reload this page a few times: if "Index version" keeps rising with no';
+    $out[] = '     edits, a hook is bumping the version every request.';
+
+    wp_die(
+        '<pre style="font:13px/1.6 ui-monospace,monospace;padding:16px;white-space:pre-wrap">' . esc_html( implode( "\n", $out ) ) . '</pre>',
+        'SA VF diagnostics',
         [ 'response' => 200 ]
     );
 } );

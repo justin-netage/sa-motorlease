@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.5.1
+Stable tag: 2.5.2
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,12 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.5.2 =
+Diagnoses and hardens the filter's index cache after reports of slow filtering on sites with a persistent object cache.
+
+* **Compressed index cache.** The vehicle index is now stored gzip-compressed (and base64-encoded so it's safe in both `wp_options` and object caches). A large catalogue previously produced an index bigger than the ~1 MB value limit some object caches (e.g. Memcached) enforce; the backend silently dropped it, so the index was rebuilt on *every* request — which is what made filtering take several seconds. Compression brings it well under that limit so it actually persists and is reused.
+* **Timing diagnostic.** Admins can visit any wp-admin URL with `?sa_vf_rebuild_index=1` (rebuild) or `?sa_vf_diag=1` (diagnose). The diagnostic reports whether the cached index is being reused or rebuilt each request, the build time, the stored blob size, whether that blob survives a round-trip through the cache, and a per-request timing breakdown — so the source of any slowness is unambiguous.
 
 = 2.5.1 =
 * **Monthly Payment is now a dropdown.** The monthly-payment filter matches the other facets — a single select field ("Monthly Payment" → the bucket options) instead of a radio list. Impossible ranges grey out based on the other active filters, exactly like the Kilometers dropdown.
