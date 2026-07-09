@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.2
+Stable tag: 2.6.3
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -53,8 +53,11 @@ This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisEl
 
 == Changelog ==
 
+= 2.6.3 =
+* **Featured / other sliders de-dupe by brand by default.** The `[sa_featured_vehicles]` carousels now show at most one card per **make** (brand) — so a strip won't fill with three Citroens even when they're different model lines (C3, C3 Plus, …). The granularity is configurable per slider via a new `dedupe` attribute: `dedupe="make"` (default, one per brand), `dedupe="make_model"` (one per make+model — the 2.6.2 behaviour), or `dedupe="none"`. Make/model still come from the cached index, so there's no extra query cost.
+
 = 2.6.2 =
-* **Featured / other sliders no longer repeat the same vehicle.** The `[sa_featured_vehicles]` carousels now show at most one card per make + model, so a strip won't fill up with three of the same Toyota Corolla. It draws from the WooCommerce "Featured" products first, then tops up with the newest vehicles in scope, skipping make+model already shown (make/model taken from the cached index, so no extra queries). Vehicles with no make/model set are still shown.
+* **Featured / other sliders no longer repeat the same vehicle.** The `[sa_featured_vehicles]` carousels show at most one card per make + model. It draws from the WooCommerce "Featured" products first, then tops up with the newest vehicles in scope, skipping duplicates (make/model taken from the cached index, so no extra queries). Vehicles with no make/model set are still shown. (Superseded by 2.6.3's brand-level default.)
 
 = 2.6.1 =
 * **Region filters by location category, not the attribute.** The Region dropdown now filters on the product-category location tree the importer assigns (province → area) instead of the `pa_region` product attribute. Choosing a parent province (e.g. Gauteng) now correctly returns vehicles in all of its child areas (Sandton, Pretoria, …), and the dropdown lists provinces with their areas indented beneath them. On the location archive pages the Region field keeps behaving as the province navigator.
