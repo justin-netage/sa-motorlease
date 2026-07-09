@@ -43,8 +43,6 @@
             if (s.hasAttribute('data-region-nav')) return; // navigator, not a filter
             if (s.name && s.value) data[s.name] = s.value;
         });
-        var pb = form.querySelector('[name="price"]:checked');
-        if (pb && pb.value) data.price = pb.value;
         // "Available Only" is the default; only send show_sold when the visitor
         // unchecks it to reveal sold vehicles.
         var ao = form.querySelector('[name="available_only"]');
@@ -226,8 +224,6 @@
         form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
             if (s.value) n++;
         });
-        var pb = form.querySelector('[name="price"]:checked');
-        if (pb && pb.value) n++;
         // Showing sold vehicles is a deviation from the default, so it counts.
         if (availToggle && !availToggle.checked) n++;
         if (toggleCount) {
@@ -262,9 +258,6 @@
         s.addEventListener('change', onFilterChange);
     });
 
-    form.querySelectorAll('[name="price"]').forEach(function (r) {
-        r.addEventListener('change', onFilterChange);
-    });
     if (availToggle) availToggle.addEventListener('change', onFilterChange);
     if (sortSel) sortSel.addEventListener('change', applyFilters);
 
@@ -279,9 +272,6 @@
             if (s.hasAttribute('data-region-nav')) return; // keep current location
             s.value = '';
         });
-        // Reset the monthly-payment radios back to "Any".
-        var anyPrice = form.querySelector('[name="price"][value=""]');
-        if (anyPrice) anyPrice.checked = true;
         // "Available Only" is the default state.
         if (availToggle) availToggle.checked = true;
         if (sortSel) sortSel.value = 'featured';

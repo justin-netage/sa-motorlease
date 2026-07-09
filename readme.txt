@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.5.0
+Stable tag: 2.5.1
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.5.1 =
+* **Monthly Payment is now a dropdown.** The monthly-payment filter matches the other facets — a single select field ("Monthly Payment" → the bucket options) instead of a radio list. Impossible ranges grey out based on the other active filters, exactly like the Kilometers dropdown.
+* **Manual index rebuild.** Admins can force the filter's vehicle index to rebuild by visiting any wp-admin URL with `?sa_vf_rebuild_index=1` (it reports how many vehicles were indexed). The index still rebuilds automatically after any vehicle change and is warmed after each import, so this is only for a one-off refresh.
 
 = 2.5.0 =
 Custom vehicle filter: new Monthly Payment filter, an admin-only enable switch, and an instant-loading rebuild.

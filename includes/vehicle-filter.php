@@ -361,6 +361,29 @@ function sa_vf_flush_caches() {
 // Piggyback on the importer's reindex signal so the catalogue stays fresh.
 add_action( 'wbw_custom_index_cron', 'sa_vf_flush_caches' );
 
+/**
+ * Manual rebuild trigger for admins: visit any wp-admin URL with
+ * ?sa_vf_rebuild_index=1 to force the index (and response cache) to rebuild
+ * immediately. Normally you never need this — the index rebuilds itself on the
+ * next request after any vehicle change and is warmed after each import — but
+ * it's handy for a one-off refresh or to confirm the vehicle count.
+ */
+add_action( 'admin_init', function () {
+    if ( empty( $_GET['sa_vf_rebuild_index'] ) || ! current_user_can( 'manage_options' ) ) {
+        return;
+    }
+    sa_vf_flush_caches(); // bump version + drop caches + warm at the new version
+    wp_die(
+        esc_html( sprintf(
+            'SA Motorlease: vehicle filter index rebuilt — %d vehicle(s) indexed (version %d).',
+            count( sa_vf_index() ),
+            sa_vf_index_version()
+        ) ),
+        'Index rebuilt',
+        [ 'response' => 200 ]
+    );
+} );
+
 /* ===========================================================================
  * Query
  * ======================================================================== */
@@ -504,6 +527,24 @@ function sa_vf_available( array $args ) {
         }
     }
     $avail['km'] = array_keys( $km_set );
+
+    // Monthly payment buckets (exclude the price selection itself), so the
+    // dropdown greys out ranges with no matches given the other filters.
+    if ( ( $args['price'] ?? '' ) !== '' ) {
+        $a2 = $args;
+        $a2['price'] = '';
+        $rows = sa_vf_filter_rows( $a2 );
+    } else {
+        $rows = $full;
+    }
+    $price_set = [];
+    foreach ( $rows as $r ) {
+        if ( $r['price'] === null ) continue;
+        foreach ( sa_vf_price_buckets() as $b ) {
+            if ( $r['price'] >= $b['min'] && $r['price'] < $b['max'] ) { $price_set[ $b['key'] ] = 1; break; }
+        }
+    }
+    $avail['price'] = array_keys( $price_set );
 
     return $avail;
 }

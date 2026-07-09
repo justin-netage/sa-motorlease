@@ -325,38 +325,6 @@
 .sa-vf .sa-vf-select::-ms-expand { display: none; } /* legacy Edge/IE arrow */
 .sa-vf .sa-vf-select:focus { outline: none; border-color: var(--sa-vf-orange); }
 
-/* monthly payment buckets (radio group) */
-.sa-vf-field--price { margin-top: 6px; margin-bottom: 8px; }
-.sa-vf-price__legend {
-    display: block;
-    font-size: 12px;
-    font-weight: 700;
-    letter-spacing: .04em;
-    text-transform: uppercase;
-    color: var(--sa-vf-navy);
-    margin-bottom: 6px;
-}
-.sa-vf-price { display: flex; flex-direction: column; gap: 2px; }
-.sa-vf-radio {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    padding: 6px 4px;
-    font-size: 13px;
-    color: var(--sa-vf-navy);
-    border-radius: var(--sa-vf-radius);
-    cursor: pointer;
-    transition: background .12s ease;
-}
-.sa-vf-radio:hover { background: rgba(244,123,36,.07); }
-.sa-vf-radio input {
-    width: 16px;
-    height: 16px;
-    flex: 0 0 auto;
-    accent-color: var(--sa-vf-orange);
-    cursor: pointer;
-}
-
 .sa-vf-field--check { margin-top: 9px; }
 .sa-vf-check {
     display: flex;
@@ -711,8 +679,6 @@
     .sa-vf .sa-vf-select { min-height: 48px; font-size: 15px; }
     .sa-vf-check { font-size: 15px; padding: 4px 0; }
     .sa-vf-check__hint { font-size: 12px; }
-    .sa-vf-radio { font-size: 15px; padding: 9px 4px; }
-    .sa-vf-price__legend { font-size: 13px; }
 }
 body.sa-vf-open { overflow: hidden; }
 

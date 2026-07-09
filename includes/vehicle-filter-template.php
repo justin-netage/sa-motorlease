@@ -75,20 +75,15 @@ $sel    = $initial['facets'];
                 </div>
 
                 <?php // Monthly payment buckets ?>
-                <div class="sa-vf-field sa-vf-field--price">
-                    <span class="sa-vf-price__legend">Monthly Payment</span>
-                    <div class="sa-vf-price" role="radiogroup" aria-label="Monthly Payment">
-                        <label class="sa-vf-radio">
-                            <input type="radio" name="price" value="" <?php checked( $initial['price'], '' ); ?>>
-                            <span>Any</span>
-                        </label>
+                <div class="sa-vf-field">
+                    <select class="sa-vf-select" name="price" data-facet="price">
+                        <option value="">Monthly Payment</option>
                         <?php foreach ( sa_vf_price_buckets() as $b ) : ?>
-                            <label class="sa-vf-radio">
-                                <input type="radio" name="price" value="<?php echo esc_attr( $b['key'] ); ?>" <?php checked( $initial['price'], $b['key'] ); ?>>
-                                <span><?php echo esc_html( $b['label'] ); ?></span>
-                            </label>
+                            <option value="<?php echo esc_attr( $b['key'] ); ?>" <?php selected( $initial['price'], $b['key'] ); ?>>
+                                <?php echo esc_html( $b['label'] ); ?>
+                            </option>
                         <?php endforeach; ?>
-                    </div>
+                    </select>
                 </div>
 
                 <?php // Availability — "Available Only" is on by default; unchecking shows sold vehicles ?>
