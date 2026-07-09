@@ -46,6 +46,27 @@ $sel    = $initial['facets'];
                         <?php continue;
                     endif;
 
+                    // Region (category filter): a hierarchical list of the
+                    // location categories — provinces with their areas indented.
+                    // Choosing a province matches every vehicle beneath it.
+                    if ( ! empty( $facet['category'] ) ) :
+                        $region_opts = sa_vf_region_options();
+                        if ( ! $region_opts ) continue;
+                        $current_region = (int) ( $initial['region'] ?? 0 );
+                        ?>
+                        <div class="sa-vf-field">
+                            <select class="sa-vf-select" name="<?php echo esc_attr( $k ); ?>" data-facet="<?php echo esc_attr( $k ); ?>">
+                                <option value=""><?php echo esc_html( $facet['label'] ); ?></option>
+                                <?php foreach ( $region_opts as $o ) : ?>
+                                    <option value="<?php echo esc_attr( $o['id'] ); ?>" <?php selected( $current_region, $o['id'] ); ?>>
+                                        <?php echo esc_html( ( $o['depth'] ? "\xC2\xA0\xC2\xA0— " : '' ) . $o['name'] ); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <?php continue;
+                    endif;
+
                     $terms = ( $k === 'year' ) ? sa_vf_year_terms() : sa_vf_terms( $facet['tax'] );
                     if ( ! $terms ) continue;
                     $current = $sel[ $k ] ?? '';
