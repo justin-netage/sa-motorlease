@@ -1159,28 +1159,44 @@ function sa_vf_not_sold_clause() {
 }
 
 /**
- * De-dupe key for a vehicle: its make + model slug (from the cached index, so
- * no extra queries). Empty when the vehicle has neither, so such vehicles are
- * treated as unique rather than collapsed together.
+ * De-dupe key for a vehicle at the requested granularity, read from the cached
+ * index (no extra queries):
+ *   'make'       → one card per make (brand)
+ *   'make_model' → one card per make + model
+ *   'none' / other → '' (no de-dup)
+ * Returns '' when the vehicle lacks the needed attribute, so it's treated as
+ * unique rather than collapsed with others.
  */
-function sa_vf_make_model_key( $id ) {
+function sa_vf_dedupe_key( $id, $mode ) {
+    if ( $mode !== 'make' && $mode !== 'make_model' ) return '';
+
     $row = sa_vf_index_by_id()[ $id ] ?? null;
     if ( $row ) {
         $mk = $row['facets']['make'][0]  ?? '';
         $md = $row['facets']['model'][0] ?? '';
     } else {
         $mkt = get_the_terms( $id, 'pa_make' );
-        $mdt = get_the_terms( $id, 'pa_model' );
         $mk  = ( $mkt && ! is_wp_error( $mkt ) ) ? reset( $mkt )->slug : '';
+        $mdt = ( $mode === 'make_model' ) ? get_the_terms( $id, 'pa_model' ) : false;
         $md  = ( $mdt && ! is_wp_error( $mdt ) ) ? reset( $mdt )->slug : '';
     }
-    return ( $mk === '' && $md === '' ) ? '' : $mk . '|' . $md;
+
+    if ( $mode === 'make' ) return $mk === '' ? '' : 'mk:' . $mk;
+    return ( $mk === '' && $md === '' ) ? '' : 'mm:' . $mk . '|' . $md;
 }
 
-function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
+/** Normalise a dedupe mode from a shortcode attribute. */
+function sa_vf_dedupe_mode( $val ) {
+    $v = strtolower( trim( (string) $val ) );
+    if ( in_array( $v, [ 'make_model', 'make-model', 'model' ], true ) ) return 'make_model';
+    if ( in_array( $v, [ 'none', 'off', 'no', '0' ], true ) )            return 'none';
+    return 'make'; // default: one card per brand
+}
+
+function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
     $limit = max( 1, (int) $limit );
-    // Pull a generous pool so that, after collapsing repeated make+model, we can
-    // still fill the slider with distinct vehicles.
+    // Pull a generous pool so that, after collapsing repeats, we can still fill
+    // the slider with distinct vehicles.
     $pool = max( $limit * 8, 48 );
 
     $base = [];
@@ -1215,13 +1231,13 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
     // then topped up with the newest vehicles in the same scope.
     $out  = [];
     $seen = [];
-    $take = function ( $ids ) use ( &$out, &$seen, $limit ) {
+    $take = function ( $ids ) use ( &$out, &$seen, $limit, $dedupe ) {
         foreach ( $ids as $id ) {
             if ( count( $out ) >= $limit ) break;
             if ( in_array( (int) $id, $out, true ) ) continue;
-            $key = sa_vf_make_model_key( $id );
+            $key = sa_vf_dedupe_key( $id, $dedupe );
             if ( $key !== '' ) {
-                if ( isset( $seen[ $key ] ) ) continue; // already have this make+model
+                if ( isset( $seen[ $key ] ) ) continue; // already showing this make / make+model
                 $seen[ $key ] = 1;
             }
             $out[] = (int) $id;
@@ -1281,8 +1297,8 @@ function sa_vf_featured_shell( $items_html, $title = '', $full = false, $attrs =
 }
 
 /** Render the featured strip. Returns '' when there are no products. */
-function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false, $attrs = [], $extra_class = '' ) {
-    $ids = sa_vf_featured_ids( $category_id, $limit );
+function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false, $attrs = [], $extra_class = '', $dedupe = 'make' ) {
+    $ids = sa_vf_featured_ids( $category_id, $limit, $dedupe );
     if ( ! $ids ) return '';
 
     $items = '';
@@ -1330,6 +1346,7 @@ function sa_vf_featured_shortcode( $atts ) {
         'full'      => 'no',              // "yes" = full-bleed width
         'max_width' => '',                // e.g. 1100 or 1100px to tighten the container
         'bg'        => '',                // panel background colour ('' / none = transparent)
+        'dedupe'    => 'make',            // 'make' (one per brand), 'make_model', or 'none'
     ], $atts, 'sa_featured_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
@@ -1353,7 +1370,7 @@ function sa_vf_featured_shortcode( $atts ) {
     return sa_vf_render_featured(
         $cat_id, (int) $atts['limit'], $atts['title'], $full,
         $style ? [ 'style' => $style ] : [],
-        $bg['class']
+        $bg['class'], sa_vf_dedupe_mode( $atts['dedupe'] )
     );
 }
 
