@@ -1158,8 +1158,30 @@ function sa_vf_not_sold_clause() {
     return [ 'taxonomy' => 'pa_sold', 'field' => 'name', 'terms' => 'Yes', 'operator' => 'NOT IN' ];
 }
 
+/**
+ * De-dupe key for a vehicle: its make + model slug (from the cached index, so
+ * no extra queries). Empty when the vehicle has neither, so such vehicles are
+ * treated as unique rather than collapsed together.
+ */
+function sa_vf_make_model_key( $id ) {
+    $row = sa_vf_index_by_id()[ $id ] ?? null;
+    if ( $row ) {
+        $mk = $row['facets']['make'][0]  ?? '';
+        $md = $row['facets']['model'][0] ?? '';
+    } else {
+        $mkt = get_the_terms( $id, 'pa_make' );
+        $mdt = get_the_terms( $id, 'pa_model' );
+        $mk  = ( $mkt && ! is_wp_error( $mkt ) ) ? reset( $mkt )->slug : '';
+        $md  = ( $mdt && ! is_wp_error( $mdt ) ) ? reset( $mdt )->slug : '';
+    }
+    return ( $mk === '' && $md === '' ) ? '' : $mk . '|' . $md;
+}
+
 function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
     $limit = max( 1, (int) $limit );
+    // Pull a generous pool so that, after collapsing repeated make+model, we can
+    // still fill the slider with distinct vehicles.
+    $pool = max( $limit * 8, 48 );
 
     $base = [];
     if ( $category_id ) {
@@ -1178,10 +1200,10 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
     $featured[] = [ 'taxonomy' => 'product_visibility', 'field' => 'name', 'terms' => 'featured' ];
     if ( count( $featured ) > 1 ) $featured = array_merge( [ 'relation' => 'AND' ], $featured );
 
-    $ids = get_posts( [
+    $featured_ids = get_posts( [
         'post_type'      => 'product',
         'post_status'    => 'publish',
-        'posts_per_page' => $limit,
+        'posts_per_page' => $pool,
         'fields'         => 'ids',
         'no_found_rows'  => true,
         'orderby'        => 'date',
@@ -1189,23 +1211,40 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8 ) {
         'tax_query'      => $featured,
     ] );
 
-    // Top up with the newest vehicles in the same scope if needed.
-    if ( count( $ids ) < $limit ) {
+    // Pick distinct make+model up to the limit, first from the featured pool,
+    // then topped up with the newest vehicles in the same scope.
+    $out  = [];
+    $seen = [];
+    $take = function ( $ids ) use ( &$out, &$seen, $limit ) {
+        foreach ( $ids as $id ) {
+            if ( count( $out ) >= $limit ) break;
+            if ( in_array( (int) $id, $out, true ) ) continue;
+            $key = sa_vf_make_model_key( $id );
+            if ( $key !== '' ) {
+                if ( isset( $seen[ $key ] ) ) continue; // already have this make+model
+                $seen[ $key ] = 1;
+            }
+            $out[] = (int) $id;
+        }
+    };
+    $take( $featured_ids );
+
+    if ( count( $out ) < $limit ) {
         $fill_args = [
             'post_type'      => 'product',
             'post_status'    => 'publish',
-            'posts_per_page' => $limit - count( $ids ),
+            'posts_per_page' => $pool,
             'fields'         => 'ids',
             'no_found_rows'  => true,
             'orderby'        => 'date',
             'order'          => 'DESC',
-            'post__not_in'   => $ids ?: [ 0 ],
+            'post__not_in'   => $out ?: [ 0 ],
         ];
         if ( $base ) $fill_args['tax_query'] = ( count( $base ) > 1 ) ? array_merge( [ 'relation' => 'AND' ], $base ) : $base;
-        $ids = array_merge( $ids, get_posts( $fill_args ) );
+        $take( get_posts( $fill_args ) );
     }
 
-    return $ids;
+    return $out;
 }
 
 /**

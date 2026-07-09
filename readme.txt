@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.1
+Stable tag: 2.6.2
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.2 =
+* **Featured / other sliders no longer repeat the same vehicle.** The `[sa_featured_vehicles]` carousels now show at most one card per make + model, so a strip won't fill up with three of the same Toyota Corolla. It draws from the WooCommerce "Featured" products first, then tops up with the newest vehicles in scope, skipping make+model already shown (make/model taken from the cached index, so no extra queries). Vehicles with no make/model set are still shown.
 
 = 2.6.1 =
 * **Region filters by location category, not the attribute.** The Region dropdown now filters on the product-category location tree the importer assigns (province → area) instead of the `pa_region` product attribute. Choosing a parent province (e.g. Gauteng) now correctly returns vehicles in all of its child areas (Sandton, Pretoria, …), and the dropdown lists provinces with their areas indented beneath them. On the location archive pages the Region field keeps behaving as the province navigator.
