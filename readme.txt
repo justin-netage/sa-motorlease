@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.3
+Stable tag: 2.6.4
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.4 =
+* **Slimmer mobile filter button, hidden over the featured carousel.** The floating "Filters" button on mobile is now more compact (less padding/font size) and stays hidden until the visitor scrolls past the featured-vehicles carousel at the top of the listings page, instead of floating over it immediately.
 
 = 2.6.3 =
 * **Featured / other sliders de-dupe by brand by default.** The `[sa_featured_vehicles]` carousels now show at most one card per **make** (brand) — so a strip won't fill with three Citroens even when they're different model lines (C3, C3 Plus, …). The granularity is configurable per slider via a new `dedupe` attribute: `dedupe="make"` (default, one per brand), `dedupe="make_model"` (one per make+model — the 2.6.2 behaviour), or `dedupe="none"`. Make/model still come from the cached index, so there's no extra query cost.
