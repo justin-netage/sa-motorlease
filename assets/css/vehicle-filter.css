@@ -567,42 +567,50 @@
     display: none;
     position: fixed;
     left: 50%;
-    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
     transform: translateX(-50%);
     z-index: 9999;
     align-items: center;
-    gap: 7px;
-    padding: 9px 16px;
+    justify-content: center;
+    gap: 9px;
+    min-width: 190px;
+    padding: 13px 30px;
     border: none;
     border-radius: 999px;
     background: var(--sa-vf-orange);
     color: #fff;
     font-weight: 700;
-    font-size: 13px;
-    letter-spacing: .02em;
+    font-size: 14px;
+    letter-spacing: .03em;
     text-transform: uppercase;
     cursor: pointer;
-    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 5px rgba(244,123,36,.18);
+    animation: sa-vf-toggle-pulse 2.4s ease-in-out infinite;
     transition: opacity .2s ease, transform .2s ease, visibility .2s ease;
 }
 .sa-vf-toggle:hover { background: var(--sa-vf-orange-dark); }
+@keyframes sa-vf-toggle-pulse {
+    0%, 100% { box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 5px rgba(244,123,36,.18); }
+    50%      { box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 9px rgba(244,123,36,.05); }
+}
 /* Hidden until the user scrolls past the featured-vehicles carousel (see vehicle-filter.js). */
 .sa-vf-toggle--hidden {
     opacity: 0;
     transform: translateX(-50%) translateY(16px);
     visibility: hidden;
     pointer-events: none;
+    animation: none;
 }
 .sa-vf-toggle__count {
-    min-width: 20px;
-    height: 20px;
+    min-width: 22px;
+    height: 22px;
     padding: 0 6px;
     border-radius: 999px;
     background: #fff;
     color: var(--sa-vf-orange);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 800;
-    line-height: 20px;
+    line-height: 22px;
     text-align: center;
 }
 
