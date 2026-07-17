@@ -567,34 +567,42 @@
     display: none;
     position: fixed;
     left: 50%;
-    bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px));
     transform: translateX(-50%);
     z-index: 9999;
     align-items: center;
-    gap: 10px;
-    padding: 14px 24px;
+    gap: 7px;
+    padding: 9px 16px;
     border: none;
     border-radius: 999px;
     background: var(--sa-vf-orange);
     color: #fff;
     font-weight: 700;
-    font-size: 15px;
+    font-size: 13px;
     letter-spacing: .02em;
     text-transform: uppercase;
     cursor: pointer;
-    box-shadow: 0 6px 20px rgba(0,0,0,.28);
+    box-shadow: 0 4px 14px rgba(0,0,0,.25);
+    transition: opacity .2s ease, transform .2s ease, visibility .2s ease;
 }
 .sa-vf-toggle:hover { background: var(--sa-vf-orange-dark); }
+/* Hidden until the user scrolls past the featured-vehicles carousel (see vehicle-filter.js). */
+.sa-vf-toggle--hidden {
+    opacity: 0;
+    transform: translateX(-50%) translateY(16px);
+    visibility: hidden;
+    pointer-events: none;
+}
 .sa-vf-toggle__count {
-    min-width: 24px;
-    height: 24px;
-    padding: 0 7px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
     border-radius: 999px;
     background: #fff;
     color: var(--sa-vf-orange);
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 800;
-    line-height: 24px;
+    line-height: 20px;
     text-align: center;
 }
 

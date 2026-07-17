@@ -386,6 +386,17 @@
     if (toggle) toggle.addEventListener('click', function () {
         sidebar && sidebar.classList.contains('is-open') ? closeDrawer() : openDrawer();
     });
+
+    // Keep the floating button out of the way of the featured-vehicles
+    // carousel — only reveal it once that strip has scrolled out of view.
+    var featured = document.querySelector('.sa-vf-featured');
+    if (toggle && featured && 'IntersectionObserver' in window) {
+        toggle.classList.add('sa-vf-toggle--hidden');
+        var featuredIO = new IntersectionObserver(function (entries) {
+            toggle.classList.toggle('sa-vf-toggle--hidden', entries[0].isIntersecting);
+        });
+        featuredIO.observe(featured);
+    }
     if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
     if (applyBtn) applyBtn.addEventListener('click', function () {
         closeDrawer();
