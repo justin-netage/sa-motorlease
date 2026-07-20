@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.5
+Stable tag: 2.6.6
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.6 =
+* **Fixed iPhone/Safari application form bugs.** The "Next" button on page 1 had no in-flight guard, so a slow mobile connection plus no visual feedback could let a second tap fire a duplicate partial-save request; if the two raced, one could return an error while the other silently succeeded and advanced the form, showing a false "Something went wrong" error even though the application went through. The final Submit button on page 2 also showed its loading overlay before Gravity Forms validation ran and never cleared it on a validation failure, leaving it stuck over the page so a corrected resubmission's tap didn't register — it's now cleared on every form re-render.
 
 = 2.6.5 =
 * **Mobile filter button is bigger and more noticeable.** The floating "Filters" button is wider (min-width + more horizontal padding), has a bolder shadow, and gets a subtle pulsing glow so it's easier to spot once it appears past the featured carousel.
