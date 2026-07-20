@@ -187,9 +187,15 @@ jQuery(document).ready(function ($) {
     }
 
     // iPhone/Safari intermittently fails the very first request on a fresh
-    // connection (cold TLS/QUIC handshake after the page has been idle) —
-    // confirmed on-device that an immediate second attempt always succeeds.
-    // Retry once automatically before bothering the user with an error.
+    // connection (cold TLS/QUIC handshake after the page has been idle).
+    // On-device testing showed an immediate retry (fired synchronously,
+    // no delay) still failed, but a manual second tap a moment later always
+    // succeeded — the connection needs a beat to actually finish
+    // establishing, not just a repeated attempt. So retry with a real delay
+    // (matching how long a human naturally takes to tap again) before
+    // bothering the user with an error.
+    const RETRY_DELAYS_MS = [1000, 1500]; // up to 2 retries (3 attempts total)
+
     function sendPartialSave(attempt) {
       $.ajax({
         url: '/wp-json/samotorlease/v1/partial-save',
@@ -216,9 +222,10 @@ jQuery(document).ready(function ($) {
           console.log('Error:', error);
           console.log('Response Text:', xhr.responseText);
 
-          if (attempt < 2) {
-            console.log('🔁 Retrying partial save...');
-            sendPartialSave(attempt + 1);
+          const delay = RETRY_DELAYS_MS[attempt - 1];
+          if (delay !== undefined) {
+            console.log('🔁 Retrying partial save in ' + delay + 'ms...');
+            setTimeout(function () { sendPartialSave(attempt + 1); }, delay);
             return;
           }
 

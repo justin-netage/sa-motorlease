@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.8
+Stable tag: 2.6.9
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.9 =
+* **Give the iPhone/Safari partial-save retry (2.6.7) time to actually work.** That retry fired instantly with no delay, which on-device testing (post-2.6.8 cache fix confirmed deployed) showed still failed both attempts back-to-back — only a manually-delayed second tap succeeded. The retry now waits ~1s/1.5s before each of up to 2 attempts, giving the underlying connection time to actually recover instead of hitting it again immediately.
 
 = 2.6.8 =
 * **Fixed stale cached JS surviving plugin updates.** `lead-qualification.js`, `qualification-results.js`, `application-form.js`, and `vehicle-locations.js` were enqueued with hand-maintained version strings that hadn't changed in several releases, so a site-level cache/CDN kept serving byte-old JS from the same cache-keyed URL even after the plugin itself was updated to a newer version. These are now versioned from the file's own modification time, so every deploy automatically busts the cache for any file that actually changed — no more silently-stale JS in front of a CDN.
