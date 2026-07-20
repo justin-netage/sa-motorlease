@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.7
+ * Version: 2.6.8
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.7' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.8' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -4072,6 +4072,17 @@ add_action('admin_init', function () {
 // ---------------------------------------------------------------------------
 // --- Frontend JS enqueues (form, qualification, application)
 // ---------------------------------------------------------------------------
+
+// Hand-maintained version strings on these enqueues went stale for releases
+// at a time (nobody remembered to bump them), so a site-level cache/CDN kept
+// serving byte-old JS from the same cache-keyed URL even after the plugin
+// itself was updated. Bust the cache automatically from the file's own
+// mtime instead — falls back to the plugin version if the file is missing.
+function sa_motorlease_asset_ver( $relative_path ) {
+    $full_path = SA_MOTORLEASE_DIR . ltrim( $relative_path, '/' );
+    return file_exists( $full_path ) ? (string) filemtime( $full_path ) : SA_MOTORLEASE_VERSION;
+}
+
 add_action('wp_enqueue_scripts', 'samotorlease_enqueue_form_script');
 function samotorlease_enqueue_form_script() {
     if (is_page('see-if-you-qualify') || is_front_page()) {
@@ -4080,7 +4091,7 @@ function samotorlease_enqueue_form_script() {
             'lead-qualification',
             plugin_dir_url(__FILE__) . 'assets/js/lead-qualification.js',
             ['jquery'],                // Dependencies
-            '1.2.5',                     // Version — bumped: tighten ID/Passport to 9-13 alphanumeric
+            sa_motorlease_asset_ver('assets/js/lead-qualification.js'),
             true                      // Load in footer
         );
     }
@@ -4094,7 +4105,7 @@ function samotorlease_enqueue_qualification_script() {
             'qualification-results',
             plugin_dir_url(__FILE__) . 'assets/js/qualification-results.js',
             ['jquery'],                // Dependencies
-            '1.1.0',                     // Version — bumped: drop cookie, use localStorage (fix HTTP 431)
+            sa_motorlease_asset_ver('assets/js/qualification-results.js'),
             true                      // Load in footer
         );
     }
@@ -4114,7 +4125,7 @@ function samotorlease_enqueue_application_script() {
             'application-form',
             plugin_dir_url(__FILE__) . 'assets/js/application-form.js',
             ['jquery'],                // Dependencies
-            '1.1.0',                     // Version — bumped: drop cookie, use localStorage (fix HTTP 431)
+            sa_motorlease_asset_ver('assets/js/application-form.js'),
             true                      // Load in footer
         );
 
@@ -4473,7 +4484,7 @@ function sl_enqueue_vehicle_locations_script() {
         'vehicle-locations',
         plugin_dir_url( __FILE__ ) . 'assets/js/vehicle-locations.js',
         [ 'jquery','flickity-js' ],
-        '1.0.4',
+        sa_motorlease_asset_ver('assets/js/vehicle-locations.js'),
         true
     );
     wp_localize_script( 'vehicle-locations', 'VehicleLocationsData', $data );

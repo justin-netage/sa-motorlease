@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.7
+Stable tag: 2.6.8
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.8 =
+* **Fixed stale cached JS surviving plugin updates.** `lead-qualification.js`, `qualification-results.js`, `application-form.js`, and `vehicle-locations.js` were enqueued with hand-maintained version strings that hadn't changed in several releases, so a site-level cache/CDN kept serving byte-old JS from the same cache-keyed URL even after the plugin itself was updated to a newer version. These are now versioned from the file's own modification time, so every deploy automatically busts the cache for any file that actually changed — no more silently-stale JS in front of a CDN.
 
 = 2.6.7 =
 * **Fixed remaining iPhone/Safari "Something went wrong" error on the application form.** The 2.6.6 fix removed a duplicate-submission race, which revealed the underlying cause: the first `partial-save` request genuinely fails on iPhone/Safari (the duplicate had been accidentally providing a working retry). The request now retries once automatically before showing an error.
