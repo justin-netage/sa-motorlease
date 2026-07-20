@@ -186,41 +186,55 @@ jQuery(document).ready(function ($) {
       console.log("⚠️ Missing required fields — GTM event not pushed");
     }
 
-    $.ajax({
-      url: '/wp-json/samotorlease/v1/partial-save',
-      method: 'POST',
-      data: JSON.stringify(requiredFields),
-      contentType: 'application/json',
-      success: function (response) {
-        console.log('✅ Partial save success:', response);
+    // iPhone/Safari intermittently fails the very first request on a fresh
+    // connection (cold TLS/QUIC handshake after the page has been idle) —
+    // confirmed on-device that an immediate second attempt always succeeds.
+    // Retry once automatically before bothering the user with an error.
+    function sendPartialSave(attempt) {
+      $.ajax({
+        url: '/wp-json/samotorlease/v1/partial-save',
+        method: 'POST',
+        data: JSON.stringify(requiredFields),
+        contentType: 'application/json',
+        success: function (response) {
+          console.log('✅ Partial save success:', response);
 
-        // Push GTM event, then continue to next form page
-        pushAfterGtmReady({
-          event: "application_form_step_1_success",
-          formStep: 1,
-          formName: "Application Form",
-          formStatus: "success"
-        }, function () {
-          $('#gform_target_page_number_5').val('2');
-          $('#gform_5').trigger('submit', [true]);
+          // Push GTM event, then continue to next form page
+          pushAfterGtmReady({
+            event: "application_form_step_1_success",
+            formStep: 1,
+            formName: "Application Form",
+            formStatus: "success"
+          }, function () {
+            $('#gform_target_page_number_5').val('2');
+            $('#gform_5').trigger('submit', [true]);
+          });
+        },
+        error: function (xhr, status, error) {
+          console.error('❌ Partial save failed (attempt ' + attempt + '):');
+          console.log('Status:', status);
+          console.log('Error:', error);
+          console.log('Response Text:', xhr.responseText);
+
+          if (attempt < 2) {
+            console.log('🔁 Retrying partial save...');
+            sendPartialSave(attempt + 1);
+            return;
+          }
+
+          alert("Something went wrong. Please try again.");
+          nextBtn.prop('disabled', false);
+        }
+      }).fail(function (xhr, textStatus, errorThrown) {
+        console.error('❌ AJAX request failed completely:', {
+          status: textStatus,
+          error: errorThrown,
+          response: xhr.responseText
         });
-      },
-      error: function (xhr, status, error) {
-        console.error('❌ Partial save failed:');
-        console.log('Status:', status);
-        console.log('Error:', error);
-        console.log('Response Text:', xhr.responseText);
-        alert("Something went wrong. Please try again.");
-        nextBtn.prop('disabled', false);
-      }
-    }).fail(function (xhr, textStatus, errorThrown) {
-      console.error('❌ AJAX request failed completely:', {
-        status: textStatus,
-        error: errorThrown,
-        response: xhr.responseText
       });
-      nextBtn.prop('disabled', false);
-    });
+    }
+
+    sendPartialSave(1);
   });
 
   // ✅ Final Submit Button (Step 2)
