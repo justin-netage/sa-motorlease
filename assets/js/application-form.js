@@ -96,6 +96,18 @@ jQuery(document).ready(function ($) {
     $('#gf5-loading-overlay').remove();
   }
 
+  // The final Submit button shows the loading overlay before Gravity Forms'
+  // own field validation has run (see below), so if that validation blocks
+  // the submission (e.g. the user needs to correct a field), the overlay is
+  // left stuck over the page — silently swallowing the next tap on Submit.
+  // Clear it any time GF re-renders the form (validation failure, page
+  // change, or confirmation), regardless of why the overlay is still there.
+  if (window.gform && gform.addAction) {
+    gform.addAction('gform_post_render', function (formId) {
+      if (formId == FORM_ID) hideLoading();
+    });
+  }
+
   // ✅ Error Message
   function showGFormError(message) {
     $(".gform_validation_errors").remove();
@@ -113,6 +125,15 @@ jQuery(document).ready(function ($) {
   // ✅ Next Button (Step 1 Save)
   nextBtn.on('click', function (e) {
     e.preventDefault();
+
+    // Guard against duplicate submissions: on a slow mobile connection the
+    // button gives no feedback while the partial-save request is in flight,
+    // so an impatient second tap fires a second concurrent request. Two
+    // concurrent partial-saves for the same lead can race on the PACE side —
+    // one comes back with an error (shown below) while the other silently
+    // succeeds and advances the form, which looks like a false error.
+    if (nextBtn.prop('disabled')) return;
+    nextBtn.prop('disabled', true);
 
     const requiredFields = {
       home_address: {
@@ -190,6 +211,7 @@ jQuery(document).ready(function ($) {
         console.log('Error:', error);
         console.log('Response Text:', xhr.responseText);
         alert("Something went wrong. Please try again.");
+        nextBtn.prop('disabled', false);
       }
     }).fail(function (xhr, textStatus, errorThrown) {
       console.error('❌ AJAX request failed completely:', {
@@ -197,6 +219,7 @@ jQuery(document).ready(function ($) {
         error: errorThrown,
         response: xhr.responseText
       });
+      nextBtn.prop('disabled', false);
     });
   });
 
