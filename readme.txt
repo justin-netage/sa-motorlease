@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.9
+Stable tag: 2.6.10
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.10 =
+* **Faster LCP on listing pages via `fetchpriority="high"` on first-row vehicle images.** PageSpeed Insights flagged the /listings/ LCP image for missing `fetchpriority=high`. WordPress core only marks the very first image in the theme's WooCommerce loop, but with a 5-column (2 on mobile) first row the LCP element is often a later card — and which vehicle sits where changes with stock, so the auto-tag kept missing it. The first 5 theme-loop product thumbnails now get `fetchpriority="high"` + `loading="eager"` via a `wp_get_attachment_image_attributes` filter, and the plugin's own card renderer does the same for the first 2 featured-strip cards and first 4 grid cards on initial (non-AJAX) render.
 
 = 2.6.9 =
 * **Give the iPhone/Safari partial-save retry (2.6.7) time to actually work.** That retry fired instantly with no delay, which on-device testing (post-2.6.8 cache fix confirmed deployed) showed still failed both attempts back-to-back — only a manually-delayed second tap succeeded. The retry now waits ~1s/1.5s before each of up to 2 attempts, giving the underlying connection time to actually recover instead of hitting it again immediately.

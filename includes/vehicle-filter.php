@@ -887,8 +887,12 @@ function sa_vf_run_query( array $args ) {
 
     ob_start();
     if ( $slice ) {
-        foreach ( $slice as $id ) {
-            echo sa_vf_render_card( $id ); // phpcs:ignore WordPress.Security.EscapeOutput
+        // On the initial server render the first row of cards is a likely LCP
+        // candidate, so raise its fetch priority. AJAX re-renders happen after
+        // first paint and never need it.
+        $priority_first = wp_doing_ajax() ? 0 : 4;
+        foreach ( array_values( $slice ) as $i => $id ) {
+            echo sa_vf_render_card( $id, $i < $priority_first ); // phpcs:ignore WordPress.Security.EscapeOutput
         }
     } else {
         echo '<div class="sa-vf-empty">No vehicles match your filters. Try widening your search.</div>';
@@ -914,7 +918,7 @@ function sa_vf_run_query( array $args ) {
  * Card renderer
  * ======================================================================== */
 
-function sa_vf_render_card( $id ) {
+function sa_vf_render_card( $id, $priority = false ) {
     $product = wc_get_product( $id );
     if ( ! $product ) return '';
 
@@ -954,7 +958,7 @@ function sa_vf_render_card( $id ) {
             <img class="sa-vf-card__img skip-lazy no-lazy"
                  src="<?php echo esc_url( $img ); ?>"
                  alt="<?php echo esc_attr( $title ); ?>"
-                 loading="eager" decoding="async" data-skip-lazy="1">
+                 loading="eager" decoding="async" data-skip-lazy="1"<?php echo $priority ? ' fetchpriority="high"' : ''; ?>>
             <?php if ( $has_hover ) : ?>
                 <img class="sa-vf-card__img sa-vf-card__img--hover skip-lazy no-lazy"
                      src="<?php echo esc_url( $hover ); ?>"
@@ -978,6 +982,32 @@ function sa_vf_render_card( $id ) {
     </a>
     <?php
     return ob_get_clean();
+}
+
+/* ===========================================================================
+ * LCP: high-priority first row of theme/Woo product thumbnails
+ *
+ * The main /listings/ page renders its product grid through the theme's
+ * WooCommerce loop (wp_get_attachment_image), not sa_vf_render_card. Core only
+ * puts fetchpriority="high" on the very first content image, but with a multi-
+ * column first row the LCP element is often the 2nd–5th thumbnail, so PSI keeps
+ * flagging "fetchpriority=high should be applied". Mark the whole first row.
+ * ======================================================================== */
+
+add_filter( 'wp_get_attachment_image_attributes', 'sa_vf_priority_loop_thumbs', 20, 3 );
+
+function sa_vf_priority_loop_thumbs( $attr, $attachment, $size ) {
+    static $count = 0;
+
+    if ( is_admin() || wp_doing_ajax() || $size !== 'woocommerce_thumbnail' ) {
+        return $attr;
+    }
+    if ( $count >= 5 ) return $attr; // first visible row: 5 cols desktop, 2 mobile
+    $count++;
+
+    $attr['fetchpriority'] = 'high';
+    $attr['loading']       = 'eager'; // high priority + lazy is contradictory
+    return $attr;
 }
 
 /* ===========================================================================
@@ -1302,8 +1332,10 @@ function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured
     if ( ! $ids ) return '';
 
     $items = '';
-    foreach ( $ids as $id ) {
-        $items .= '<div class="sa-vf-featured__item">' . sa_vf_render_card( $id ) . '</div>';
+    // The strip renders above the grid, so its first couple of cards are the
+    // usual LCP candidates on archive pages — fetch those at high priority.
+    foreach ( array_values( $ids ) as $i => $id ) {
+        $items .= '<div class="sa-vf-featured__item">' . sa_vf_render_card( $id, $i < 2 ) . '</div>';
     }
     return sa_vf_featured_shell( $items, $title, $full, $attrs, '', $extra_class );
 }
