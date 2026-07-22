@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.10
+ * Version: 2.6.11
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.10' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.11' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -44,6 +44,9 @@ if (
     require_once SA_MOTORLEASE_DIR . 'includes/vehicle-filter.php';
 }
 unset( $sa_ml_vf_opts );
+
+// Background WebP conversion + render-time serving (replaces CompressX).
+require_once SA_MOTORLEASE_DIR . 'includes/webp-converter.php';
 
 // === CONFIG =================================================================
 
@@ -6204,6 +6207,25 @@ function sa_motorlease_render_status_page() {
                     } else {
                         echo class_exists( 'GFForms' ) ? 'active' : 'not active';
                     }
+                ?></td></tr>
+            </tbody>
+        </table>
+
+        <h2 class="title">WebP conversion</h2>
+        <table class="widefat striped" style="max-width:900px">
+            <tbody>
+                <?php $webp = sa_webp_status_counts(); ?>
+                <tr><th style="width:240px">Encoder</th><td><?php
+                    echo $webp['method']
+                        ? '<code>' . esc_html( $webp['method'] ) . '</code>'
+                        : '<span style="color:#b91c1c">unavailable — need Imagick or GD with WebP support</span>';
+                ?></td></tr>
+                <tr><th>Converted / eligible</th><td><?php echo (int) $webp['done']; ?> / <?php echo (int) $webp['eligible']; ?> attachments (<?php echo (int) $webp['pending']; ?> pending)</td></tr>
+                <tr><th>Cron</th><td><?php
+                    $next = wp_next_scheduled( 'sa_webp_convert_cron' );
+                    echo $next
+                        ? 'next tick ' . esc_html( human_time_diff( time(), $next ) ) . ' from now (every 5 min)'
+                        : '<span style="color:#b91c1c">not scheduled</span>';
                 ?></td></tr>
             </tbody>
         </table>
