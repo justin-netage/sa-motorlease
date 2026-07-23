@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.11
+Stable tag: 2.6.12
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -52,6 +52,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.12 =
+* **Fix: the 2.6.10 fetchpriority filter never ran in production.** It was placed in `includes/vehicle-filter.php`, which only loads when the (currently disabled) custom vehicle-filter module is enabled — so live listings pages still only had core's first-image-only `fetchpriority` and Lighthouse kept flagging the LCP image. The `wp_get_attachment_image_attributes` filter (first 5 `woocommerce_thumbnail` images get `fetchpriority="high"` + `loading="eager"`) now lives in the always-loaded `includes/webp-converter.php`.
 
 = 2.6.11 =
 * **Built-in background WebP conversion — the CompressX plugin can be retired.** A batched, time-budgeted cron (every 5 min, newest attachments first) converts JPEG/PNG originals and all sub-sizes to `{file}.webp` siblings (Imagick preferred, GD fallback, quality 80, copies only kept when actually smaller). Originals and attachment URLs are never modified, so the importer's MD5-based image diff sync is untouched. At render time, image src/srcset URLs are swapped to the `.webp` sibling when it exists — distinct URLs, so Cloudflare caches each variant correctly (no Accept-header pitfalls). WebP siblings are cleaned up when WP deletes the underlying file, and stale copies are re-converted after thumbnail regeneration. New "WebP conversion" section on the Status page shows encoder, converted/pending counts and next cron tick. Config via `SA_WEBP_QUALITY`, `SA_WEBP_BATCH_SIZE`, `SA_WEBP_MAX_SECONDS`, `SA_WEBP_DISABLE` constants.
