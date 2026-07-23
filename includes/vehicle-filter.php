@@ -985,32 +985,6 @@ function sa_vf_render_card( $id, $priority = false ) {
 }
 
 /* ===========================================================================
- * LCP: high-priority first row of theme/Woo product thumbnails
- *
- * The main /listings/ page renders its product grid through the theme's
- * WooCommerce loop (wp_get_attachment_image), not sa_vf_render_card. Core only
- * puts fetchpriority="high" on the very first content image, but with a multi-
- * column first row the LCP element is often the 2nd–5th thumbnail, so PSI keeps
- * flagging "fetchpriority=high should be applied". Mark the whole first row.
- * ======================================================================== */
-
-add_filter( 'wp_get_attachment_image_attributes', 'sa_vf_priority_loop_thumbs', 20, 3 );
-
-function sa_vf_priority_loop_thumbs( $attr, $attachment, $size ) {
-    static $count = 0;
-
-    if ( is_admin() || wp_doing_ajax() || $size !== 'woocommerce_thumbnail' ) {
-        return $attr;
-    }
-    if ( $count >= 5 ) return $attr; // first visible row: 5 cols desktop, 2 mobile
-    $count++;
-
-    $attr['fetchpriority'] = 'high';
-    $attr['loading']       = 'eager'; // high priority + lazy is contradictory
-    return $attr;
-}
-
-/* ===========================================================================
  * AJAX endpoint
  * ======================================================================== */
 
