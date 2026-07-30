@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.12
+ * Version: 2.6.13
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.12' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.13' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -47,6 +47,9 @@ unset( $sa_ml_vf_opts );
 
 // Background WebP conversion + render-time serving (replaces CompressX).
 require_once SA_MOTORLEASE_DIR . 'includes/webp-converter.php';
+
+// Maintenance mode — branded 503 holding page for the public site.
+require_once SA_MOTORLEASE_DIR . 'includes/maintenance-mode.php';
 
 // === CONFIG =================================================================
 
@@ -4209,7 +4212,7 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
 
     // External API request
     $response = wp_remote_post(
-        sa_motorlease_pace_url( '/api/entity/paceWebCreateLead' ),
+        sa_motorlease_pace_leads_url( '/api/entity/paceWebCreateLead' ),
         [
             'headers' => ['Content-Type' => 'application/json'],
             'body'    => wp_json_encode($data),
@@ -4308,7 +4311,7 @@ function gf5_forward_to_external_api( $entry, $form ) {
     $lead_id   = intval( rgar( $entry, '42' ) );
     $proof_raw = rgar( $entry, '35' );
     $proof     = filter_var( $proof_raw, FILTER_VALIDATE_BOOLEAN ) ? 'true' : 'false';
-    $external  = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
+    $external  = sa_motorlease_pace_leads_url( '/api/entity/paceWebUpdateLead' );
 
     // Helper: POST a payload to paceWebUpdateLead, log the call, and log any error.
     // The bank-statement base64 blob is replaced with a placeholder in logs so
@@ -5130,7 +5133,7 @@ function samotorlease_handle_partial_save(WP_REST_Request $request) {
         sprintf('POST paceWebUpdateLead (lead_id=%d) request=%s',
             $lead_id, wp_json_encode( sa_motorlease_mask_pii( $data ) )));
 
-    $external_url = sa_motorlease_pace_url( '/api/entity/paceWebUpdateLead' );
+    $external_url = sa_motorlease_pace_leads_url( '/api/entity/paceWebUpdateLead' );
     $response = wp_remote_post($external_url, [
         'headers' => ['Content-Type' => 'application/json'],
         'body'    => $json_payload,
@@ -5640,6 +5643,8 @@ const SA_MOTORLEASE_STATUS_SLUG     = 'sa-motorlease-status';
 function sa_motorlease_default_settings() {
     return [
         'pace_base_url'        => 'https://paceapp-server.azurewebsites.net',
+        // Blank = use pace_base_url. See sa_motorlease_pace_leads_base_url().
+        'pace_leads_base_url'  => '',
         'pace_enabled'         => 1,
         'qualify_form_ids'     => '1,3',
         'gf_forwarder_form_id' => 5,
@@ -5648,6 +5653,9 @@ function sa_motorlease_default_settings() {
         'listings_disclaimer'  => 'Please note all vehicle listings are subject to availability and may change without prior notice. Images are for illustration purposes only and may differ from the actual vehicle offered. Prices, specifications, and features are provided as a guide and may vary depending on stock, condition, and applicable fees. Placement on this page does not guarantee that a vehicle is currently available',
         'listings_page_id'     => 0,
         'vehicle_filter_enabled' => 0,
+        'maintenance_enabled'  => 0,
+        'maintenance_heading'  => 'We\'ll be back shortly',
+        'maintenance_message'  => 'Our website is temporarily offline for scheduled maintenance. We\'re working to bring it back as quickly as possible — please check again a little later.',
     ];
 }
 
@@ -5680,16 +5688,33 @@ function sa_motorlease_pace_base_url() {
 }
 
 /**
- * Join an endpoint path onto the configured PACE base URL, preserving any
- * query string the admin attached to the base (e.g. ?env=test). Naive string
- * concatenation would place the query before the path and break the URL.
+ * Base URL for the lead endpoints (paceWebCreateLead / paceWebUpdateLead).
  *
- *   pace_base_url = https://host?env=test
- *   path          = /api/entity/paceWebCreateLead
- *   result        = https://host/api/entity/paceWebCreateLead?env=test
+ * Leads can be pointed at a different PACE host to everything else — e.g. to
+ * send live lead traffic to a new server while the rest of the integration
+ * stays put, or the reverse. Left blank (the default) it inherits the main
+ * PACE base URL, so existing installs behave exactly as before.
  */
-function sa_motorlease_pace_url( $path = '' ) {
-    $base  = sa_motorlease_get_setting( 'pace_base_url', 'https://paceapp-server.azurewebsites.net' );
+function sa_motorlease_pace_leads_base_url() {
+    $url = trim( (string) sa_motorlease_get_setting( 'pace_leads_base_url', '' ) );
+    return $url !== '' ? untrailingslashit( $url ) : sa_motorlease_pace_base_url();
+}
+
+/** True when the leads base URL is set to something other than the main one. */
+function sa_motorlease_pace_leads_url_is_override() {
+    return trim( (string) sa_motorlease_get_setting( 'pace_leads_base_url', '' ) ) !== '';
+}
+
+/**
+ * Join an endpoint path onto a PACE base URL, preserving any query string the
+ * admin attached to the base (e.g. ?env=test). Naive string concatenation
+ * would place the query before the path and break the URL.
+ *
+ *   base   = https://host?env=test
+ *   path   = /api/entity/paceWebCreateLead
+ *   result = https://host/api/entity/paceWebCreateLead?env=test
+ */
+function sa_motorlease_join_pace_url( $base, $path = '' ) {
     $parts = wp_parse_url( (string) $base );
 
     if ( ! $parts || empty( $parts['host'] ) ) {
@@ -5708,6 +5733,19 @@ function sa_motorlease_pace_url( $path = '' ) {
     }
 
     return $scheme . '://' . $host . $port . $base_path . $path . $query;
+}
+
+/** Endpoint URL on the main PACE base (vehicle feed, images, everything else). */
+function sa_motorlease_pace_url( $path = '' ) {
+    return sa_motorlease_join_pace_url(
+        sa_motorlease_get_setting( 'pace_base_url', 'https://paceapp-server.azurewebsites.net' ),
+        $path
+    );
+}
+
+/** Endpoint URL on the leads base (falls back to the main base when unset). */
+function sa_motorlease_pace_leads_url( $path = '' ) {
+    return sa_motorlease_join_pace_url( sa_motorlease_pace_leads_base_url(), $path );
 }
 
 function sa_motorlease_pace_posting_enabled() {
@@ -5942,13 +5980,22 @@ add_action( 'admin_init', function () {
         },
         SA_MOTORLEASE_SETTINGS_SLUG
     );
+    add_settings_section(
+        'sa_motorlease_section_maintenance',
+        'Maintenance Mode',
+        function () {
+            echo '<p>Takes the public site offline and shows a branded maintenance page (HTTP 503, <code>noindex</code>) to visitors. Logged-in administrators keep browsing the real site as normal, so you can always get back here to switch it off.</p>';
+        },
+        SA_MOTORLEASE_SETTINGS_SLUG
+    );
 
     $f = function ( $id, $title, $cb, $section ) {
         add_settings_field( $id, $title, $cb, SA_MOTORLEASE_SETTINGS_SLUG, $section );
     };
 
-    $f( 'pace_base_url', 'PACE base URL', 'sa_motorlease_field_pace_base_url',   'sa_motorlease_section_pace' );
-    $f( 'pace_enabled',  'Post to PACE',  'sa_motorlease_field_pace_enabled',    'sa_motorlease_section_pace' );
+    $f( 'pace_base_url',       'PACE base URL',       'sa_motorlease_field_pace_base_url',       'sa_motorlease_section_pace' );
+    $f( 'pace_leads_base_url', 'Leads base URL',      'sa_motorlease_field_pace_leads_base_url', 'sa_motorlease_section_pace' );
+    $f( 'pace_enabled',        'Post to PACE',        'sa_motorlease_field_pace_enabled',        'sa_motorlease_section_pace' );
 
     $f( 'qualify_form_ids',     'Qualify form IDs',  'sa_motorlease_field_qualify_form_ids',     'sa_motorlease_section_forms' );
     $f( 'gf_forwarder_form_id', 'Forwarder form ID', 'sa_motorlease_field_gf_forwarder_form_id', 'sa_motorlease_section_forms' );
@@ -5964,6 +6011,10 @@ add_action( 'admin_init', function () {
     if ( sa_motorlease_is_filter_admin() ) {
         $f( 'vehicle_filter_enabled', 'Enable vehicle filter', 'sa_motorlease_field_vehicle_filter_enabled', 'sa_motorlease_section_listings' );
     }
+
+    $f( 'maintenance_enabled', 'Maintenance mode',    'sa_motorlease_field_maintenance_enabled', 'sa_motorlease_section_maintenance' );
+    $f( 'maintenance_heading', 'Heading',             'sa_motorlease_field_maintenance_heading', 'sa_motorlease_section_maintenance' );
+    $f( 'maintenance_message', 'Message',             'sa_motorlease_field_maintenance_message', 'sa_motorlease_section_maintenance' );
 } );
 
 function sa_motorlease_sanitize_settings( $input ) {
@@ -5973,6 +6024,13 @@ function sa_motorlease_sanitize_settings( $input ) {
     if ( isset( $input['pace_base_url'] ) ) {
         $url = esc_url_raw( trim( (string) $input['pace_base_url'] ) );
         $out['pace_base_url'] = $url !== '' ? untrailingslashit( $url ) : $defaults['pace_base_url'];
+    }
+
+    // Leads base URL is optional — blank means "inherit pace_base_url", so an
+    // empty submission clears the override rather than restoring a default.
+    if ( isset( $input['pace_leads_base_url'] ) ) {
+        $url = esc_url_raw( trim( (string) $input['pace_leads_base_url'] ) );
+        $out['pace_leads_base_url'] = $url !== '' ? untrailingslashit( $url ) : '';
     }
 
     $out['pace_enabled'] = ! empty( $input['pace_enabled'] ) ? 1 : 0;
@@ -6012,6 +6070,23 @@ function sa_motorlease_sanitize_settings( $input ) {
         $out['vehicle_filter_enabled'] = ! empty( $input['vehicle_filter_enabled'] ) ? 1 : 0;
     }
 
+    // Maintenance mode. The heading/message fields are always submitted with
+    // the checkbox, so it's safe to key the checkbox off their presence and
+    // treat an absent box as "off".
+    if ( isset( $input['maintenance_heading'] ) || isset( $input['maintenance_message'] ) ) {
+        $out['maintenance_enabled'] = ! empty( $input['maintenance_enabled'] ) ? 1 : 0;
+    }
+
+    if ( isset( $input['maintenance_heading'] ) ) {
+        $heading = sanitize_text_field( trim( (string) $input['maintenance_heading'] ) );
+        $out['maintenance_heading'] = $heading !== '' ? $heading : $defaults['maintenance_heading'];
+    }
+
+    if ( isset( $input['maintenance_message'] ) ) {
+        $message = wp_kses_post( trim( (string) $input['maintenance_message'] ) );
+        $out['maintenance_message'] = $message !== '' ? $message : $defaults['maintenance_message'];
+    }
+
     return $out;
 }
 
@@ -6024,6 +6099,21 @@ function sa_motorlease_field_pace_base_url() {
         esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
     );
     echo '<p class="description">No trailing slash. A query string is allowed and will be preserved on every endpoint — e.g. <code>https://paceapp-server.azurewebsites.net?env=test</code> produces calls like <code>.../api/entity/paceWebCreateLead?env=test</code>. Use the preview host (<code>https://paceapp-server-preview.azurewebsites.net</code>) to test changes against the staging API.</p>';
+}
+
+function sa_motorlease_field_pace_leads_base_url() {
+    $val = esc_attr( (string) sa_motorlease_get_setting( 'pace_leads_base_url', '' ) );
+    printf(
+        '<input type="url" class="regular-text code" name="%s[pace_leads_base_url]" value="%s" placeholder="Leave blank to use the PACE base URL above">',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), $val
+    );
+    echo '<p class="description">Optional. When set, the lead endpoints (<code>paceWebCreateLead</code> and <code>paceWebUpdateLead</code> — qualify-lead, partial-save and the Gravity Forms forwarder) post here instead of the base URL above; everything else (vehicle feed, images) keeps using the main base URL. Leave blank to send leads to the main base URL. Same rules apply: no trailing slash, and a query string is preserved on every endpoint.</p>';
+    if ( sa_motorlease_pace_leads_url_is_override() ) {
+        printf(
+            '<p class="description"><strong>Leads currently post to:</strong> <code>%s</code></p>',
+            esc_html( sa_motorlease_pace_leads_url( '/api/entity/paceWebCreateLead' ) )
+        );
+    }
 }
 
 function sa_motorlease_field_pace_enabled() {
@@ -6107,6 +6197,42 @@ function sa_motorlease_field_vehicle_filter_enabled() {
     }
 }
 
+function sa_motorlease_field_maintenance_enabled() {
+    $on = (bool) sa_motorlease_get_setting( 'maintenance_enabled' );
+    printf(
+        '<label><input type="checkbox" id="sa-ml-maintenance-toggle" data-was-on="%d" name="%s[maintenance_enabled]" value="1" %s> <strong>Take the public site offline</strong></label>',
+        $on ? 1 : 0,
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ),
+        checked( $on, true, false )
+    );
+    echo '<p class="description">Visitors get the maintenance page below with an HTTP 503 status. Administrators (anyone who can manage options) still see the normal site, and wp-admin, wp-login.php, the import crons and the PACE lead endpoints are unaffected.</p>';
+    printf(
+        '<p class="description"><a href="%s" target="_blank" rel="noopener">Preview the maintenance page</a> — opens the front end as a visitor would see it, without taking the site down.</p>',
+        esc_url( add_query_arg( 'sa_maintenance_preview', '1', home_url( '/' ) ) )
+    );
+    if ( $on ) {
+        echo '<p class="description" style="color:#b91c1c"><strong>Maintenance mode is currently active.</strong></p>';
+    }
+}
+
+function sa_motorlease_field_maintenance_heading() {
+    $val = (string) sa_motorlease_get_setting( 'maintenance_heading' );
+    printf(
+        '<input type="text" class="regular-text" name="%s[maintenance_heading]" value="%s">',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), esc_attr( $val )
+    );
+    echo '<p class="description">Headline on the maintenance page (also used as the browser tab title). Leave blank to restore the default.</p>';
+}
+
+function sa_motorlease_field_maintenance_message() {
+    $val = (string) sa_motorlease_get_setting( 'maintenance_message' );
+    printf(
+        '<textarea class="large-text" rows="5" name="%s[maintenance_message]">%s</textarea>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), esc_textarea( $val )
+    );
+    echo '<p class="description">Body text shown beneath the headline. Basic HTML and links are allowed; blank lines become paragraphs. Leave blank to restore the default.</p>';
+}
+
 // --- Settings page renderer -------------------------------------------------
 
 function sa_motorlease_render_settings_page() {
@@ -6114,7 +6240,7 @@ function sa_motorlease_render_settings_page() {
     ?>
     <div class="wrap">
         <h1>SA Motorlease — Settings</h1>
-        <form action="options.php" method="post">
+        <form id="sa-ml-settings-form" action="options.php" method="post">
             <?php
             settings_fields( SA_MOTORLEASE_SETTINGS_OPTION );
             do_settings_sections( SA_MOTORLEASE_SETTINGS_SLUG );
@@ -6122,6 +6248,135 @@ function sa_motorlease_render_settings_page() {
             ?>
         </form>
     </div>
+    <?php
+    sa_motorlease_render_maintenance_confirm_dialog();
+}
+
+/**
+ * "Are you sure?" gate in front of the maintenance-mode toggle.
+ *
+ * Switching the site off is the one setting on this page with an immediate,
+ * customer-visible effect, so it gets an explicit confirmation step rather than
+ * a single stray click. The dialog fires when the box is ticked, and again on
+ * submit if the box is somehow checked without having been confirmed (keyboard
+ * navigation, autofill, browser restore). Turning maintenance mode back *off*
+ * is never gated — that only ever restores the site.
+ */
+function sa_motorlease_render_maintenance_confirm_dialog() {
+    ?>
+    <style>
+        .sa-ml-modal-backdrop {
+            position: fixed; inset: 0; z-index: 100100;
+            background: rgba(0, 30, 51, .6);
+            display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .sa-ml-modal-backdrop[hidden] { display: none; }
+        .sa-ml-modal {
+            background: #fff; border-radius: 6px; max-width: 480px; width: 100%;
+            box-shadow: 0 18px 50px rgba(0, 20, 40, .35); overflow: hidden;
+        }
+        .sa-ml-modal__head {
+            background: #003b65; color: #fff; padding: 14px 20px;
+            font-size: 15px; font-weight: 600;
+        }
+        .sa-ml-modal__body { padding: 18px 20px; color: #374151; }
+        .sa-ml-modal__body p { margin: 0 0 10px; }
+        .sa-ml-modal__body p:last-child { margin-bottom: 0; }
+        .sa-ml-modal__foot {
+            padding: 14px 20px; background: #f2f3f5; border-top: 1px solid #d9dde2;
+            display: flex; gap: 10px; justify-content: flex-end;
+        }
+        .sa-ml-modal__foot .button-primary {
+            background: #f47b24; border-color: #d9661a; box-shadow: none; text-shadow: none;
+        }
+        .sa-ml-modal__foot .button-primary:hover,
+        .sa-ml-modal__foot .button-primary:focus {
+            background: #d9661a; border-color: #d9661a;
+        }
+    </style>
+
+    <div class="sa-ml-modal-backdrop" id="sa-ml-maintenance-modal" role="dialog" aria-modal="true"
+         aria-labelledby="sa-ml-maintenance-modal-title" hidden>
+        <div class="sa-ml-modal">
+            <div class="sa-ml-modal__head" id="sa-ml-maintenance-modal-title">Enable maintenance mode?</div>
+            <div class="sa-ml-modal__body">
+                <p><strong>This takes the public site offline.</strong> Every visitor — including customers mid-application — will see the maintenance page instead of the site, and search engines will get an HTTP 503.</p>
+                <p>You'll still be able to browse the site and reach this page as an administrator, so you can switch it back off at any time.</p>
+            </div>
+            <div class="sa-ml-modal__foot">
+                <button type="button" class="button" id="sa-ml-maintenance-cancel">Cancel</button>
+                <button type="button" class="button button-primary" id="sa-ml-maintenance-confirm">Yes, take the site offline</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function () {
+        var toggle  = document.getElementById('sa-ml-maintenance-toggle');
+        var modal   = document.getElementById('sa-ml-maintenance-modal');
+        var form    = document.getElementById('sa-ml-settings-form');
+        if (!toggle || !modal || !form) return;
+
+        var okBtn     = document.getElementById('sa-ml-maintenance-confirm');
+        var cancelBtn = document.getElementById('sa-ml-maintenance-cancel');
+        // Already-on means the operator confirmed on a previous save; only the
+        // off -> on transition needs confirming.
+        var wasOn     = toggle.getAttribute('data-was-on') === '1';
+        var confirmed = false;
+        var onConfirm = null;
+        var lastFocus = null;
+
+        function open(cb) {
+            onConfirm = cb;
+            lastFocus = document.activeElement;
+            modal.hidden = false;
+            okBtn.focus();
+        }
+
+        function close() {
+            modal.hidden = true;
+            onConfirm = null;
+            if (lastFocus && lastFocus.focus) lastFocus.focus();
+        }
+
+        function cancel() {
+            confirmed = false;
+            toggle.checked = false;
+            close();
+        }
+
+        okBtn.addEventListener('click', function () {
+            confirmed = true;
+            var cb = onConfirm;
+            close();
+            if (cb) cb();
+        });
+
+        cancelBtn.addEventListener('click', cancel);
+
+        modal.addEventListener('click', function (e) {
+            if (e.target === modal) cancel();
+        });
+
+        document.addEventListener('keydown', function (e) {
+            if (!modal.hidden && e.key === 'Escape') cancel();
+        });
+
+        toggle.addEventListener('change', function () {
+            if (toggle.checked && !wasOn) {
+                open(null);
+            } else {
+                confirmed = false;
+            }
+        });
+
+        form.addEventListener('submit', function (e) {
+            if (!toggle.checked || wasOn || confirmed) return;
+            e.preventDefault();
+            open(function () { form.submit(); });
+        });
+    })();
+    </script>
     <?php
 }
 
@@ -6187,7 +6442,8 @@ function sa_motorlease_render_status_page() {
         $lead_tail = implode( "\n", array_slice( $matched, -50 ) );
     }
 
-    $pace_base = sa_motorlease_pace_base_url();
+    $pace_base  = sa_motorlease_pace_base_url();
+    $leads_base = sa_motorlease_pace_leads_base_url();
     ?>
     <div class="wrap">
         <h1>SA Motorlease — Status</h1>
@@ -6234,8 +6490,18 @@ function sa_motorlease_render_status_page() {
         <table class="widefat striped" style="max-width:900px">
             <tbody>
                 <tr><th style="width:240px">PACE base URL</th><td><code><?php echo esc_html( $pace_base ); ?></code></td></tr>
-                <tr><th>Example endpoint</th><td><code><?php echo esc_html( sa_motorlease_pace_url( '/api/entity/paceWebCreateLead' ) ); ?></code></td></tr>
+                <tr><th>Leads base URL</th><td>
+                    <code><?php echo esc_html( $leads_base ); ?></code>
+                    <?php echo sa_motorlease_pace_leads_url_is_override()
+                        ? '<em> (override)</em>'
+                        : '<em> (inherited from PACE base URL)</em>'; ?>
+                </td></tr>
+                <tr><th>Example lead endpoint</th><td><code><?php echo esc_html( sa_motorlease_pace_leads_url( '/api/entity/paceWebCreateLead' ) ); ?></code></td></tr>
+                <tr><th>Example feed endpoint</th><td><code><?php echo esc_html( sa_motorlease_pace_url( '/api/entity/paceWebPrepData' ) ); ?></code></td></tr>
                 <tr><th>PACE posting</th><td><?php echo sa_motorlease_pace_posting_enabled() ? '<span style="color:#137333">enabled</span>' : '<span style="color:#b91c1c">disabled</span>'; ?></td></tr>
+                <tr><th>Maintenance mode</th><td><?php echo sa_motorlease_maintenance_enabled()
+                    ? '<span style="color:#b91c1c"><strong>ON</strong> — public site is offline (503)</span>'
+                    : '<span style="color:#137333">off</span>'; ?></td></tr>
                 <tr><th>Qualify form IDs</th><td><code><?php echo esc_html( $settings['qualify_form_ids'] ); ?></code></td></tr>
                 <tr><th>Forwarder form ID</th><td><code><?php echo (int) $settings['gf_forwarder_form_id']; ?></code> (hook: <code>gform_after_submission_<?php echo (int) $settings['gf_forwarder_form_id']; ?></code>)</td></tr>
                 <tr><th>Log level</th><td><?php echo (int) SA_MOTORLEASE_LOG_LEVEL; ?> (constant) / <?php echo (int) $settings['log_level']; ?> (setting)</td></tr>

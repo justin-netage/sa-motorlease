@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.12
+Stable tag: 2.6.13
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -33,6 +33,11 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 * `[qualified_results_vehicles]` and `[cheapest_price]` shortcodes
 * WooCommerce "no products found" override
 
+**Site controls (SA Motorlease → Settings)**
+
+* Optional separate "Leads base URL" so lead traffic can post to a different PACE host to the vehicle feed (blank = inherit the main base URL)
+* Maintenance mode — branded HTTP 503 holding page with editable heading and message, behind an "are you sure?" confirmation; administrators, wp-admin, wp-login.php, cron and the REST API are never blocked
+
 **Maintenance / admin URL triggers** (all gated by `manage_options` or `manage_woocommerce`)
 
 * `?update_license_plates`, `?deduplicate_products`, `?export_attributes`
@@ -52,6 +57,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.13 =
+* **Separate base URL for lead traffic.** New optional "Leads base URL" setting under PACE API. When set, the three lead calls (`paceWebCreateLead` from qualify-lead, and `paceWebUpdateLead` from partial-save and the Gravity Forms forwarder) post to that host while the vehicle feed and image endpoints keep using the main PACE base URL — so lead traffic can be moved to a different PACE server independently of the importer. Left blank (the default) it inherits the main base URL, so existing installs are unchanged. Query strings on the base are preserved on every endpoint exactly as before, and the Status page now shows both bases plus an example endpoint for each.
+* **Maintenance mode.** New Maintenance Mode section with an on/off toggle, an editable heading and message, and an "are you sure?" confirmation dialog in front of the toggle (enabling only — switching it back off is never gated). While active, front-end visitors get a self-contained holding page styled to the SA Motorlease brand (navy/orange, site logo) with an HTTP 503 status, `Retry-After` and `noindex` headers. The gate runs on `template_redirect`, so wp-admin, wp-login.php, WP-Cron, admin-ajax and the REST API are untouched — the import crons keep running and anyone with `manage_options` still browses the real site, which makes it impossible to lock yourself out. Admins can preview the page without taking the site down via a link on the Settings page (`?sa_maintenance_preview=1`), and every admin screen carries a warning notice while maintenance mode is on.
 
 = 2.6.12 =
 * **Fix: the 2.6.10 fetchpriority filter never ran in production.** It was placed in `includes/vehicle-filter.php`, which only loads when the (currently disabled) custom vehicle-filter module is enabled — so live listings pages still only had core's first-image-only `fetchpriority` and Lighthouse kept flagging the LCP image. The `wp_get_attachment_image_attributes` filter (first 5 `woocommerce_thumbnail` images get `fetchpriority="high"` + `loading="eager"`) now lives in the always-loaded `includes/webp-converter.php`.
