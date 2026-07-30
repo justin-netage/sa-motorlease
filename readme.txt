@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.13
+Stable tag: 2.6.14
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -21,7 +21,7 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 * Image-repair cron and bulk image-sync admin UI
 * WBW index trigger after each run
 * Optional pruning of products not in the feed
-* Per-plugin log files
+* Rolling log in `wp-content/uploads/sa-motorlease-logs/` (survives plugin updates; not reachable over HTTP)
 
 **Lead qualification and application flow**
 
@@ -57,6 +57,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.14 =
+* **The log no longer gets wiped by every plugin update — and is no longer publicly readable.** It lived at `wp-content/plugins/sa-motorlease/sa-motorlease.log`, inside the folder WordPress deletes and re-unpacks on each update, so every release threw away the entire history right when it was most useful for checking whether the release behaved. It now lives in `wp-content/uploads/sa-motorlease-logs/`, which updates don't touch. That old path was also fetchable over HTTP at a guessable URL, and WARN/ERROR lines can carry full lead request/response bodies (unmasked, by design, so failures are debuggable) — so the new directory gets a deny-all `.htaccess` and an `index.html`, and the filename carries a per-site hash derived from the WP salts, which is what protects it on nginx where `.htaccess` is ignored. A log left at the old path by a manual folder replacement (rather than the WP updater, which deletes it) is moved across on first write. Set `SA_MOTORLEASE_LOG_DIR` in `wp-config.php` to keep logs somewhere else entirely, e.g. outside the webroot. The Status page shows the resolved path and whether the directory guard is in place.
 
 = 2.6.13 =
 * **Separate base URL for lead traffic.** New optional "Leads base URL" setting under PACE API. When set, the three lead calls (`paceWebCreateLead` from qualify-lead, and `paceWebUpdateLead` from partial-save and the Gravity Forms forwarder) post to that host while the vehicle feed and image endpoints keep using the main PACE base URL — so lead traffic can be moved to a different PACE server independently of the importer. Left blank (the default) it inherits the main base URL, so existing installs are unchanged. Query strings on the base are preserved on every endpoint exactly as before, and the Status page now shows both bases plus an example endpoint for each.

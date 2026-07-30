@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.13
+ * Version: 2.6.14
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.13' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.14' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -70,10 +70,12 @@ if (!defined('VI_PRUNE_DRY_RUN')) define('VI_PRUNE_DRY_RUN', false);
 // === Central logger + retention =============================================
 //
 // All plugin logging routes through sa_motorlease_log() and lands in a single
-// rolling file: sa-motorlease.log (in this plugin directory). Each line is
-// tagged with [channel] and [LEVEL]. Lines below SA_MOTORLEASE_LOG_LEVEL are
-// silently dropped, so flipping the threshold to DEBUG temporarily restores
-// verbose tracing without touching call sites.
+// rolling file under wp-content/uploads/sa-motorlease-logs/ — outside the
+// plugin directory, which WordPress wipes on every update. See
+// sa_motorlease_log_dir(). Each line is tagged with [channel] and [LEVEL].
+// Lines below SA_MOTORLEASE_LOG_LEVEL are silently dropped, so flipping the
+// threshold to DEBUG temporarily restores verbose tracing without touching
+// call sites.
 //
 // A daily WP-cron event (sa_motorlease_log_rotate_daily) trims any line
 // older than SA_MOTORLEASE_LOG_RETENTION_DAYS days.
@@ -87,13 +89,95 @@ if (!defined('SA_MOTORLEASE_LOG_DEBUG')) define('SA_MOTORLEASE_LOG_DEBUG', 40);
 if (!defined('SA_MOTORLEASE_LOG_LEVEL'))           define('SA_MOTORLEASE_LOG_LEVEL', SA_MOTORLEASE_LOG_WARN);
 if (!defined('SA_MOTORLEASE_LOG_RETENTION_DAYS'))  define('SA_MOTORLEASE_LOG_RETENTION_DAYS', 21);
 
+/**
+ * Directory the log lives in — deliberately NOT the plugin directory.
+ *
+ * WordPress deletes the entire plugin folder and unpacks the new one on every
+ * update, so a log kept beside the plugin file was destroyed on each release.
+ * The uploads directory survives updates.
+ *
+ * Override with SA_MOTORLEASE_LOG_DIR (e.g. a path outside the webroot) in
+ * wp-config.php if you'd rather keep logs off the public filesystem entirely.
+ */
+function sa_motorlease_log_dir() {
+    if (defined('SA_MOTORLEASE_LOG_DIR') && SA_MOTORLEASE_LOG_DIR) {
+        return rtrim(SA_MOTORLEASE_LOG_DIR, '/\\') . DIRECTORY_SEPARATOR;
+    }
+    $up   = function_exists('wp_get_upload_dir') ? wp_get_upload_dir() : [];
+    $base = !empty($up['basedir']) ? $up['basedir'] : WP_CONTENT_DIR . '/uploads';
+    return rtrim($base, '/\\') . DIRECTORY_SEPARATOR . 'sa-motorlease-logs' . DIRECTORY_SEPARATOR;
+}
+
+/**
+ * Absolute path to the log file, creating and hardening its directory on first
+ * use. Resolved once per request.
+ *
+ * The filename carries a per-site hash derived from the WP salts because
+ * WARN/ERROR lines can contain full lead request/response bodies — under the
+ * old plugin-directory location that file was fetchable at a guessable public
+ * URL. The hash, the deny-all .htaccess and the index.html are three
+ * independent guards against that.
+ */
 function sa_motorlease_log_path() {
+    static $path = null;
+    if ($path !== null) return $path;
+
+    // Back-compat: this constant used to be defined here as a side effect of
+    // resolving the log path. Kept so any external caller still resolves.
     if (!defined('VEHICLE_IMPORT_PLUGIN_FILE')) {
         define('VEHICLE_IMPORT_PLUGIN_FILE', __FILE__);
     }
-    $dir = plugin_dir_path(VEHICLE_IMPORT_PLUGIN_FILE);
-    if (substr($dir, -1) !== DIRECTORY_SEPARATOR) $dir .= DIRECTORY_SEPARATOR;
-    return $dir . 'sa-motorlease.log';
+
+    $dir  = sa_motorlease_log_dir();
+    $file = $dir . 'sa-motorlease-' . substr(wp_hash('sa-motorlease-log'), 0, 12) . '.log';
+
+    if (!is_dir($dir)) {
+        wp_mkdir_p($dir);
+        sa_motorlease_log_protect_dir($dir);
+    }
+
+    sa_motorlease_log_migrate_legacy($file);
+
+    return $path = $file;
+}
+
+/** Block HTTP access to the log directory (Apache) and hide its contents. */
+function sa_motorlease_log_protect_dir($dir) {
+    $ht = $dir . '.htaccess';
+    if (!file_exists($ht)) {
+        @file_put_contents($ht,
+            "# SA Motorlease logs — never served over HTTP.\n" .
+            "<IfModule mod_authz_core.c>\n    Require all denied\n</IfModule>\n" .
+            "<IfModule !mod_authz_core.c>\n    Order allow,deny\n    Deny from all\n</IfModule>\n"
+        );
+    }
+    // Nginx ignores .htaccess, so there the filename hash is the real guard;
+    // this only stops directory listings.
+    $idx = $dir . 'index.html';
+    if (!file_exists($idx)) @file_put_contents($idx, '');
+}
+
+/**
+ * Rescue a log left behind at the old plugin-directory path. Only reachable
+ * when the plugin folder was replaced in place (manual upload / rsync) rather
+ * than through the WP updater, which deletes it — but in that case the whole
+ * history would otherwise be thrown away on the next write.
+ */
+function sa_motorlease_log_migrate_legacy($new_file) {
+    $legacy = plugin_dir_path(SA_MOTORLEASE_FILE) . 'sa-motorlease.log';
+    if (!file_exists($legacy)) return;
+
+    // Straight rename when there's nothing to merge. Keeps the timeline in
+    // order, which rotation relies on — it trusts the first line's timestamp
+    // to decide whether trimming is needed at all.
+    if (!file_exists($new_file) || filesize($new_file) === 0) {
+        if (file_exists($new_file)) @unlink($new_file);
+        if (@rename($legacy, $new_file)) return;
+    }
+
+    // Otherwise park it beside the live log rather than interleaving two
+    // timelines — or dropping it on the floor.
+    @rename($legacy, dirname($new_file) . DIRECTORY_SEPARATOR . 'sa-motorlease-legacy.log');
 }
 
 function sa_motorlease_log($channel, $level, $msg) {
@@ -5968,7 +6052,7 @@ add_action( 'admin_init', function () {
         'sa_motorlease_section_logging',
         'Logging',
         function () {
-            echo '<p>Threshold and retention for <code>sa-motorlease.log</code>. Lower numeric levels are more important — ERROR (10) is always written, DEBUG (40) is the loudest.</p>';
+            echo '<p>Threshold and retention for the plugin log. It lives in <code>wp-content/uploads/sa-motorlease-logs/</code> so it survives plugin updates — the Status page shows the exact path. Lower numeric levels are more important — ERROR (10) is always written, DEBUG (40) is the loudest.</p>';
         },
         SA_MOTORLEASE_SETTINGS_SLUG
     );
@@ -6539,7 +6623,7 @@ function sa_motorlease_render_status_page() {
 
         <h2 class="title">Lead endpoint activity</h2>
         <p>
-            Filtered tail of <code>sa-motorlease.log</code> for channels
+            Filtered tail of the plugin log for channels
             <code>[qualify-lead]</code>, <code>[partial-save]</code>, and
             <code>[gf5-forward]</code>.
             Recent counts (last 2,000 log lines):
@@ -6560,6 +6644,13 @@ function sa_motorlease_render_status_page() {
             — size <strong><?php echo esc_html( $log_size ); ?></strong>,
             last write <strong><?php echo esc_html( $log_mtime ); ?></strong>
         </p>
+        <p>
+            Stored outside the plugin directory, so it survives plugin updates.
+            Directory guard: <?php echo file_exists( sa_motorlease_log_dir() . '.htaccess' )
+                ? '<code>.htaccess</code> present'
+                : '<span style="color:#a16207"><code>.htaccess</code> missing</span>'; ?>
+            (on nginx the hashed filename is what keeps the log unreachable over HTTP).
+        </p>
         <?php if ( $log_tail !== '' ) : ?>
             <pre style="background:#0d1117;color:#c9d1d9;padding:14px;border-radius:6px;max-height:360px;overflow:auto;font-size:12px;line-height:1.5;"><?php echo esc_html( $log_tail ); ?></pre>
         <?php else : ?>
@@ -6571,7 +6662,7 @@ function sa_motorlease_render_status_page() {
         <?php
         $tools = [
             // [ label, query_arg, description, dangerous, new_tab ]
-            [ 'Run import now (create+update)',  'vi_run_import',                  'Run create + update import in-process. Bypasses WP-Cron loopback. Tail sa-motorlease.log for output.', false, true  ],
+            [ 'Run import now (create+update)',  'vi_run_import',                  'Run create + update import in-process. Bypasses WP-Cron loopback. Tail the plugin log for output.', false, true  ],
             [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
             [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
             [ 'Cleanup sold products',          'cleanup_sold_products',          'Mark in-feed sold vehicles and clean up sold status.',                  false, false ],
