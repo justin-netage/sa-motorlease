@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.14
+Stable tag: 2.6.15
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,15 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.15 =
+Fixes the "Invalid API response (missing lead_id)" error users saw on `/qualify-lead` when the PACE API was the thing that failed, and adds a site notice for telling visitors about an outage without taking the site down.
+
+* **Site notice (new).** A Settings section that puts a thin banner above the navbar and a popup on the public site while leaving it fully online — the soft alternative to maintenance mode, for a PACE outage or a heads-up ahead of a maintenance window. The popup shows **once per visitor session** (tracked in `sessionStorage`, so the markup stays cacheable) and the banner's *More info* button reopens it on demand. Heading and message default to the maintenance-mode copy, so there's nothing to write twice; editing either counts as a new notice and re-shows the popup to people who dismissed the old one. Banner and popup toggle independently, admins get a `?sa_notice_preview=1` preview link and a persistent admin notice while it's live.
+
+* **Honest error reporting.** A PACE 5xx (or any unparseable response) now returns 502 with "Our lead system is temporarily unavailable" instead of a 400 reading "Invalid API response (missing lead_id)". PACE returns a bare 500 with a non-JSON body when it's unhealthy, which `json_decode` turned into null — that fell through the missing-lead_id branch and told the user their submission was invalid. The three failure classes (transport/5xx, 4xx rejection, 2xx without a lead_id) are now distinguished, and each logs one line instead of two near-identical WARNs.
+* **Retry on fast failures.** `paceWebCreateLead` is retried once, 1.5s later, when the failure came back in under 3 seconds. A normal create takes 10-15s (PACE allocates the lead, then runs the qualification calculation), so a sub-second 500 means nothing was created and is safe to replay. Slow 500s and timeouts are never retried — PACE may already have created the lead, and a retry would allocate a second one.
+* **Failed submissions are recorded.** Failures are kept in a structured list on the Status page (name, contact, ID, reason, HTTP status, attempts) so they can be reconciled against PACE — a 500 after lead creation leaves a lead upstream that we have no local record of. Rows age out on the log retention window.
 
 = 2.6.14 =
 * **The log no longer gets wiped by every plugin update — and is no longer publicly readable.** It lived at `wp-content/plugins/sa-motorlease/sa-motorlease.log`, inside the folder WordPress deletes and re-unpacks on each update, so every release threw away the entire history right when it was most useful for checking whether the release behaved. It now lives in `wp-content/uploads/sa-motorlease-logs/`, which updates don't touch. That old path was also fetchable over HTTP at a guessable URL, and WARN/ERROR lines can carry full lead request/response bodies (unmasked, by design, so failures are debuggable) — so the new directory gets a deny-all `.htaccess` and an `index.html`, and the filename carries a per-site hash derived from the WP salts, which is what protects it on nginx where `.htaccess` is ignored. A log left at the old path by a manual folder replacement (rather than the WP updater, which deletes it) is moved across on first write. Set `SA_MOTORLEASE_LOG_DIR` in `wp-config.php` to keep logs somewhere else entirely, e.g. outside the webroot. The Status page shows the resolved path and whether the directory guard is in place.
