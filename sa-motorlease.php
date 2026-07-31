@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.14
+ * Version: 2.6.15
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.14' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.15' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -50,6 +50,10 @@ require_once SA_MOTORLEASE_DIR . 'includes/webp-converter.php';
 
 // Maintenance mode — branded 503 holding page for the public site.
 require_once SA_MOTORLEASE_DIR . 'includes/maintenance-mode.php';
+
+// Site notice — banner + once-per-session popup, for when the site stays up
+// but something behind it (e.g. the PACE lead API) is degraded.
+require_once SA_MOTORLEASE_DIR . 'includes/site-notice.php';
 
 // === CONFIG =================================================================
 
@@ -4294,8 +4298,9 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     sa_motorlease_log_lead( 'qualify-lead', SA_MOTORLEASE_LOG_INFO,
         'POST paceWebCreateLead request=' . wp_json_encode( sa_motorlease_mask_pii( $data ) ) );
 
-    // External API request
-    $response = wp_remote_post(
+    // External API request. Retries once on a fast 5xx — see
+    // sa_motorlease_pace_post_lead() for why only the fast ones are retried.
+    list( $response, $attempts ) = sa_motorlease_pace_post_lead(
         sa_motorlease_pace_leads_url( '/api/entity/paceWebCreateLead' ),
         [
             'headers' => ['Content-Type' => 'application/json'],
@@ -4304,32 +4309,64 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
         ]
     );
 
+    $tries = $attempts > 1 ? sprintf( ' attempts=%d', $attempts ) : '';
+
+    // An upstream failure must not be reported to the user as a problem with
+    // their input. PACE answers with a bare 500 and a non-JSON body ("An error
+    // occurred while making the request.") whenever it's unhealthy; json_decode
+    // turns that into null, which used to fall through to the missing-lead_id
+    // branch and surface as "Invalid API response (missing lead_id)" with a 400.
+    $unavailable = [
+        'error' => 'Our lead system is temporarily unavailable. Please try again in a few minutes, or <a href="/contact-us">contact us</a>.',
+    ];
+
     if (is_wp_error($response)) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_ERROR,
-            sprintf('WP_Error from paceWebCreateLead: %s request=%s',
-                $response->get_error_message(), sa_motorlease_log_truncate( wp_json_encode( $data ) )));
-        return new WP_REST_Response(['error' => 'API connection failed'], 500);
+            sprintf('WP_Error from paceWebCreateLead:%s %s request=%s',
+                $tries, $response->get_error_message(), sa_motorlease_log_truncate( wp_json_encode( $data ) )));
+        sa_motorlease_record_failed_lead( $data,
+            'connection failed: ' . $response->get_error_message(), 0, '', $attempts );
+        return new WP_REST_Response($unavailable, 502);
     }
 
     $status_code = wp_remote_retrieve_response_code($response);
     $raw_body    = wp_remote_retrieve_body($response);
     $body        = json_decode($raw_body, true);
 
-    if ($status_code < 200 || $status_code >= 300) {
+    // 5xx, or any response we can't parse: upstream is broken, not the payload.
+    if ( $status_code >= 500 || ! is_array( $body ) ) {
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
-            sprintf('paceWebCreateLead HTTP %d request=%s response=%s',
-                $status_code, sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+            sprintf('paceWebCreateLead upstream failure http=%d%s request=%s response=%s',
+                $status_code, $tries,
+                sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+        sa_motorlease_record_failed_lead( $data, 'upstream error', $status_code, $raw_body, $attempts );
+        return new WP_REST_Response($unavailable, 502);
     }
 
-    if (empty($body['lead_id'])) {
-        $upstream_msg = isset($body['message']) ? $body['message'] : 'unknown';
+    // 4xx with a parseable body: PACE rejected the payload and said why.
+    if ( $status_code < 200 || $status_code >= 300 ) {
+        $upstream_msg = isset($body['message']) && is_string($body['message']) ? $body['message'] : 'unknown';
         sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
-            sprintf('paceWebCreateLead missing lead_id; upstream=%s http=%d request=%s response=%s',
-                $upstream_msg, $status_code, sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+            sprintf('paceWebCreateLead rejected http=%d%s upstream=%s request=%s response=%s',
+                $status_code, $tries, $upstream_msg,
+                sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+        sa_motorlease_record_failed_lead( $data, 'rejected: ' . $upstream_msg, $status_code, $raw_body, $attempts );
         return new WP_REST_Response([
-            'error'    => 'Invalid API response (missing lead_id)',
+            'error'    => 'We could not process that submission. Please check your details and try again.',
             'upstream' => $upstream_msg,
         ], 400);
+    }
+
+    // 2xx but no lead_id — a genuine contract violation, distinct from the 5xx
+    // case above. Still upstream's problem, so don't blame the user for it.
+    if (empty($body['lead_id'])) {
+        $upstream_msg = isset($body['message']) && is_string($body['message']) ? $body['message'] : 'unknown';
+        sa_motorlease_log_lead('qualify-lead', SA_MOTORLEASE_LOG_WARN,
+            sprintf('paceWebCreateLead missing lead_id in %d response; upstream=%s%s request=%s response=%s',
+                $status_code, $upstream_msg, $tries,
+                sa_motorlease_log_truncate( wp_json_encode( $data ) ), substr($raw_body, 0, 1000)));
+        sa_motorlease_record_failed_lead( $data, 'missing lead_id in 2xx response', $status_code, $raw_body, $attempts );
+        return new WP_REST_Response($unavailable, 502);
     }
 
     // Save response summary (extend if you add columns for e_hailing/other_location).
@@ -5740,6 +5777,13 @@ function sa_motorlease_default_settings() {
         'maintenance_enabled'  => 0,
         'maintenance_heading'  => 'We\'ll be back shortly',
         'maintenance_message'  => 'Our website is temporarily offline for scheduled maintenance. We\'re working to bring it back as quickly as possible — please check again a little later.',
+        // Site notice. Heading/message default to blank, which means "inherit
+        // the maintenance copy above" — see sa_motorlease_notice_heading().
+        'notice_enabled'       => 0,
+        'notice_heading'       => '',
+        'notice_message'       => '',
+        'notice_banner'        => 1,
+        'notice_popup'         => 1,
     ];
 }
 
@@ -5834,6 +5878,107 @@ function sa_motorlease_pace_leads_url( $path = '' ) {
 
 function sa_motorlease_pace_posting_enabled() {
     return (bool) sa_motorlease_get_setting( 'pace_enabled', 1 );
+}
+
+/**
+ * POST to a PACE lead endpoint, retrying once when the failure looks like it
+ * happened before PACE did any work.
+ *
+ * paceWebCreateLead normally takes 10-15s: PACE allocates the lead, then runs
+ * the qualification calculation. Two different 500s come out of it —
+ *
+ *   - Fast (~1s): the service itself is unhealthy and nothing was created.
+ *     Safe to retry, and a short backoff usually clears it.
+ *   - Slow (~10s): PACE created the lead and then threw on a later step. The
+ *     lead exists upstream (we've seen a lead_id allocated and skipped in the
+ *     sequence), so retrying just allocates a second one.
+ *
+ * The responses are indistinguishable — both are a bare 500 with a non-JSON
+ * "An error occurred while making the request." body — so elapsed time is the
+ * only discriminator we have. Retry the fast ones, never the slow ones. The
+ * same guard means a request that burns its full timeout is not retried
+ * either, which is what we want: a timeout may well have been processed.
+ *
+ * Returns [ $response, $attempts ]; $response is the WP HTTP array or WP_Error
+ * from the final attempt.
+ */
+function sa_motorlease_pace_post_lead( $url, array $args, $retry_under_seconds = 3.0, $max_attempts = 2 ) {
+    $attempt  = 0;
+    $response = null;
+
+    while ( true ) {
+        $attempt++;
+        $started  = microtime( true );
+        $response = wp_remote_post( $url, $args );
+        $elapsed  = microtime( true ) - $started;
+
+        if ( $attempt >= $max_attempts ) {
+            break;
+        }
+
+        $code        = is_wp_error( $response ) ? 0 : (int) wp_remote_retrieve_response_code( $response );
+        $retriable   = is_wp_error( $response ) || $code >= 500;
+        if ( ! $retriable || $elapsed >= $retry_under_seconds ) {
+            break;
+        }
+
+        usleep( 1500000 ); // 1.5s before the second attempt.
+    }
+
+    return [ $response, $attempt ];
+}
+
+// --- Failed lead submissions ------------------------------------------------
+//
+// A PACE 500 on paceWebCreateLead does not mean nothing happened upstream — the
+// create and the qualification calculation are separate steps on their side, so
+// a lead can exist in PACE while we hand the user an error. The log already
+// records the full request, but it's a rolling text file; this keeps the same
+// failures as a structured list on the Status page so they can be reconciled
+// against PACE (and so a user's second attempt can be spotted as a duplicate).
+//
+// Rows carry the contact details needed to identify the person, so they inherit
+// the log's retention window rather than accumulating forever.
+
+/** Days a failed-lead row is kept, mirroring the log retention setting. */
+function sa_motorlease_failed_leads_retention_days() {
+    $days = (int) sa_motorlease_get_setting( 'log_retention_days', SA_MOTORLEASE_LOG_RETENTION_DAYS );
+    return $days > 0 ? $days : SA_MOTORLEASE_LOG_RETENTION_DAYS;
+}
+
+function sa_motorlease_get_failed_leads() {
+    $rows = get_option( 'sa_motorlease_failed_leads', [] );
+    return is_array( $rows ) ? $rows : [];
+}
+
+function sa_motorlease_record_failed_lead( array $data, $reason, $status_code, $raw_body, $attempts ) {
+    $rows   = sa_motorlease_get_failed_leads();
+    $rows[] = [
+        'ts'        => time(),
+        'time'      => current_time( 'mysql' ),
+        'reason'    => (string) $reason,
+        'http'      => (int) $status_code,
+        'attempts'  => (int) $attempts,
+        'response'  => substr( (string) $raw_body, 0, 300 ),
+        'name'      => trim( ( $data['name'] ?? '' ) . ' ' . ( $data['surname'] ?? '' ) ),
+        'id_number' => (string) ( $data['id_number'] ?? '' ),
+        'phone'     => (string) ( $data['cellphone_number'] ?? '' ),
+        'email'     => (string) ( $data['your_email'] ?? '' ),
+        'location'  => (string) ( $data['location'] ?? '' ),
+    ];
+
+    // Age out on write.
+    $cutoff = time() - ( sa_motorlease_failed_leads_retention_days() * DAY_IN_SECONDS );
+    $rows   = array_values( array_filter( $rows, function ( $row ) use ( $cutoff ) {
+        return isset( $row['ts'] ) && (int) $row['ts'] >= $cutoff;
+    } ) );
+
+    if ( count( $rows ) > 50 ) {
+        $rows = array_slice( $rows, -50 );
+    }
+
+    // Not autoloaded — this is only ever read on the Status page.
+    update_option( 'sa_motorlease_failed_leads', $rows, false );
 }
 
 /**
@@ -6072,6 +6217,14 @@ add_action( 'admin_init', function () {
         },
         SA_MOTORLEASE_SETTINGS_SLUG
     );
+    add_settings_section(
+        'sa_motorlease_section_notice',
+        'Site Notice',
+        function () {
+            echo '<p>The soft alternative to maintenance mode: the site stays up and browsable, visitors just get told something is going on. A thin banner sits above the navbar, and a popup shows the full message <strong>once per visitor session</strong>. Use it for a PACE outage where lead submissions are failing, for a heads-up ahead of a maintenance window, or for anything else worth flagging without a 503.</p>';
+        },
+        SA_MOTORLEASE_SETTINGS_SLUG
+    );
 
     $f = function ( $id, $title, $cb, $section ) {
         add_settings_field( $id, $title, $cb, SA_MOTORLEASE_SETTINGS_SLUG, $section );
@@ -6099,6 +6252,11 @@ add_action( 'admin_init', function () {
     $f( 'maintenance_enabled', 'Maintenance mode',    'sa_motorlease_field_maintenance_enabled', 'sa_motorlease_section_maintenance' );
     $f( 'maintenance_heading', 'Heading',             'sa_motorlease_field_maintenance_heading', 'sa_motorlease_section_maintenance' );
     $f( 'maintenance_message', 'Message',             'sa_motorlease_field_maintenance_message', 'sa_motorlease_section_maintenance' );
+
+    $f( 'notice_enabled',  'Show site notice', 'sa_motorlease_field_notice_enabled',  'sa_motorlease_section_notice' );
+    $f( 'notice_surfaces', 'Show it as',       'sa_motorlease_field_notice_surfaces', 'sa_motorlease_section_notice' );
+    $f( 'notice_heading',  'Heading',          'sa_motorlease_field_notice_heading',  'sa_motorlease_section_notice' );
+    $f( 'notice_message',  'Message',          'sa_motorlease_field_notice_message',  'sa_motorlease_section_notice' );
 } );
 
 function sa_motorlease_sanitize_settings( $input ) {
@@ -6169,6 +6327,26 @@ function sa_motorlease_sanitize_settings( $input ) {
     if ( isset( $input['maintenance_message'] ) ) {
         $message = wp_kses_post( trim( (string) $input['maintenance_message'] ) );
         $out['maintenance_message'] = $message !== '' ? $message : $defaults['maintenance_message'];
+    }
+
+    // Site notice. Same trick as maintenance mode: the text fields are always
+    // submitted alongside the checkboxes, so their presence is what tells us
+    // this section was on the submitted form and an absent box means "off".
+    if ( isset( $input['notice_heading'] ) || isset( $input['notice_message'] ) ) {
+        $out['notice_enabled'] = ! empty( $input['notice_enabled'] ) ? 1 : 0;
+        $out['notice_banner']  = ! empty( $input['notice_banner'] )  ? 1 : 0;
+        $out['notice_popup']   = ! empty( $input['notice_popup'] )   ? 1 : 0;
+    }
+
+    // Blank is meaningful here — it means "inherit the maintenance copy" — so
+    // unlike the maintenance fields an empty submission is stored as-is rather
+    // than restoring a default.
+    if ( isset( $input['notice_heading'] ) ) {
+        $out['notice_heading'] = sanitize_text_field( trim( (string) $input['notice_heading'] ) );
+    }
+
+    if ( isset( $input['notice_message'] ) ) {
+        $out['notice_message'] = wp_kses_post( trim( (string) $input['notice_message'] ) );
     }
 
     return $out;
@@ -6315,6 +6493,62 @@ function sa_motorlease_field_maintenance_message() {
         esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), esc_textarea( $val )
     );
     echo '<p class="description">Body text shown beneath the headline. Basic HTML and links are allowed; blank lines become paragraphs. Leave blank to restore the default.</p>';
+}
+
+// --- Site notice fields -----------------------------------------------------
+
+function sa_motorlease_field_notice_enabled() {
+    $on = (bool) sa_motorlease_get_setting( 'notice_enabled' );
+    printf(
+        '<label><input type="checkbox" name="%s[notice_enabled]" value="1" %s> <strong>Show the notice to visitors</strong></label>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ), checked( $on, true, false )
+    );
+    echo '<p class="description">The site stays fully online — this only adds the banner and popup. Independent of maintenance mode; you can run either, both or neither.</p>';
+    printf(
+        '<p class="description"><a href="%s" target="_blank" rel="noopener">Preview the notice</a> — shows it to you on the live front end without switching it on for anyone else.</p>',
+        esc_url( add_query_arg( 'sa_notice_preview', '1', home_url( '/' ) ) )
+    );
+    if ( $on ) {
+        echo '<p class="description" style="color:#b91c1c"><strong>The site notice is currently live.</strong></p>';
+    }
+}
+
+function sa_motorlease_field_notice_surfaces() {
+    $opt    = esc_attr( SA_MOTORLEASE_SETTINGS_OPTION );
+    $banner = (bool) sa_motorlease_get_setting( 'notice_banner' );
+    $popup  = (bool) sa_motorlease_get_setting( 'notice_popup' );
+
+    printf(
+        '<label><input type="checkbox" name="%s[notice_banner]" value="1" %s> Thin banner above the navbar</label><br>',
+        $opt, checked( $banner, true, false )
+    );
+    printf(
+        '<label><input type="checkbox" name="%s[notice_popup]" value="1" %s> Popup, once per visitor session</label>',
+        $opt, checked( $popup, true, false )
+    );
+    echo '<p class="description">The banner shows the heading and stays for the whole visit. The popup carries the full message and appears once per session — dismissing it keeps it closed until the visitor opens a new browser session, though the banner\'s <em>More info</em> button can reopen it any time. Editing the heading or message counts as a new notice and shows the popup again, even to people who already dismissed the old one.</p>';
+}
+
+function sa_motorlease_field_notice_heading() {
+    $val = (string) sa_motorlease_get_setting( 'notice_heading' );
+    printf(
+        '<input type="text" class="regular-text" name="%s[notice_heading]" value="%s" placeholder="%s">',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ),
+        esc_attr( $val ),
+        esc_attr( (string) sa_motorlease_get_setting( 'maintenance_heading' ) )
+    );
+    echo '<p class="description">Banner text and popup headline. Leave blank to use the maintenance heading above (shown greyed out as the placeholder).</p>';
+}
+
+function sa_motorlease_field_notice_message() {
+    $val = (string) sa_motorlease_get_setting( 'notice_message' );
+    printf(
+        '<textarea class="large-text" rows="4" name="%s[notice_message]" placeholder="%s">%s</textarea>',
+        esc_attr( SA_MOTORLEASE_SETTINGS_OPTION ),
+        esc_attr( wp_strip_all_tags( (string) sa_motorlease_get_setting( 'maintenance_message' ) ) ),
+        esc_textarea( $val )
+    );
+    echo '<p class="description">Body text inside the popup. Basic HTML and links are allowed; blank lines become paragraphs. Leave blank to use the maintenance message above.</p>';
 }
 
 // --- Settings page renderer -------------------------------------------------
@@ -6526,6 +6760,8 @@ function sa_motorlease_render_status_page() {
         $lead_tail = implode( "\n", array_slice( $matched, -50 ) );
     }
 
+    $failed_leads = sa_motorlease_get_failed_leads();
+
     $pace_base  = sa_motorlease_pace_base_url();
     $leads_base = sa_motorlease_pace_leads_base_url();
     ?>
@@ -6586,6 +6822,20 @@ function sa_motorlease_render_status_page() {
                 <tr><th>Maintenance mode</th><td><?php echo sa_motorlease_maintenance_enabled()
                     ? '<span style="color:#b91c1c"><strong>ON</strong> — public site is offline (503)</span>'
                     : '<span style="color:#137333">off</span>'; ?></td></tr>
+                <tr><th>Site notice</th><td><?php
+                    if ( ! sa_motorlease_notice_enabled() ) {
+                        echo '<span style="color:#137333">off</span>';
+                    } else {
+                        $surfaces = [];
+                        if ( sa_motorlease_notice_banner_enabled() ) $surfaces[] = 'banner';
+                        if ( sa_motorlease_notice_popup_enabled() )  $surfaces[] = 'popup';
+                        printf(
+                            '<span style="color:#a16207"><strong>ON</strong></span> — %s · <em>%s</em>',
+                            $surfaces ? esc_html( implode( ' + ', $surfaces ) ) : '<span style="color:#b91c1c">no surface selected, nothing renders</span>',
+                            esc_html( sa_motorlease_notice_heading() )
+                        );
+                    }
+                ?></td></tr>
                 <tr><th>Qualify form IDs</th><td><code><?php echo esc_html( $settings['qualify_form_ids'] ); ?></code></td></tr>
                 <tr><th>Forwarder form ID</th><td><code><?php echo (int) $settings['gf_forwarder_form_id']; ?></code> (hook: <code>gform_after_submission_<?php echo (int) $settings['gf_forwarder_form_id']; ?></code>)</td></tr>
                 <tr><th>Log level</th><td><?php echo (int) SA_MOTORLEASE_LOG_LEVEL; ?> (constant) / <?php echo (int) $settings['log_level']; ?> (setting)</td></tr>
@@ -6636,6 +6886,46 @@ function sa_motorlease_render_status_page() {
             <pre style="background:#0d1117;color:#c9d1d9;padding:14px;border-radius:6px;max-height:420px;overflow:auto;font-size:12px;line-height:1.5;"><?php echo esc_html( $lead_tail ); ?></pre>
         <?php else : ?>
             <p><em>No lead endpoint activity in the recent log window.</em></p>
+        <?php endif; ?>
+
+        <h2 class="title">Failed lead submissions</h2>
+        <p>
+            Submissions <code>/qualify-lead</code> could not complete because PACE
+            errored. A 500 on <code>paceWebCreateLead</code> can still have created
+            the lead upstream — PACE allocates the lead before it runs the
+            qualification step — so check these against PACE before treating them
+            as lost, and watch for the same person appearing twice after a retry.
+            Rows age out after <?php echo (int) sa_motorlease_failed_leads_retention_days(); ?> days.
+        </p>
+        <?php if ( $failed_leads ) : ?>
+            <table class="widefat striped" style="max-width:1100px">
+                <thead>
+                    <tr>
+                        <th style="width:150px">When</th>
+                        <th>Name</th>
+                        <th>Contact</th>
+                        <th>ID/Passport</th>
+                        <th>Reason</th>
+                        <th style="width:60px">HTTP</th>
+                        <th style="width:60px">Tries</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ( array_reverse( $failed_leads ) as $row ) : ?>
+                    <tr>
+                        <td><?php echo esc_html( $row['time'] ?? '' ); ?></td>
+                        <td><?php echo esc_html( $row['name'] ?? '' ); ?></td>
+                        <td><?php echo esc_html( trim( ( $row['phone'] ?? '' ) . ' ' . ( $row['email'] ?? '' ) ) ); ?></td>
+                        <td><code><?php echo esc_html( $row['id_number'] ?? '' ); ?></code></td>
+                        <td><?php echo esc_html( $row['reason'] ?? '' ); ?></td>
+                        <td><?php echo (int) ( $row['http'] ?? 0 ); ?></td>
+                        <td><?php echo (int) ( $row['attempts'] ?? 1 ); ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        <?php else : ?>
+            <p><em>None recorded.</em></p>
         <?php endif; ?>
 
         <h2 class="title">Log file</h2>
