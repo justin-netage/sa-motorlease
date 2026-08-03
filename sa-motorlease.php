@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.16
+ * Version: 2.6.17
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.16' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.17' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -1407,20 +1407,31 @@ function vi_fetch_feed() {
 
 // === Create: import new vehicles from feed ==================================
 
-function vi_create_new_products() {
+/**
+ * @param int|null $budget_sec Wall-clock budget for this pass. Null = VI_MAX_CREATE_SEC.
+ * @param int|null $item_cap   Max products to create. Null = VI_MAX_VEHICLES_PER_RUN.
+ * @return array{ok:bool,reason:string,created:int,more:bool,elapsed:float}
+ *         `more` is true when the pass stopped on its cap or budget rather than
+ *         reaching the end of the feed — i.e. calling again will do more work.
+ *         Both parameters default to the constants, so the hourly cron behaves
+ *         exactly as before; the batched admin runner passes short budgets.
+ */
+function vi_create_new_products($budget_sec = null, $item_cap = null) {
     global $image_labels;
+
+    $budget_sec = ($budget_sec === null) ? (int) VI_MAX_CREATE_SEC : max(5, (int) $budget_sec);
+    $run_t0     = microtime(true);
 
     $lock_key = 'vi_create_running_lock';
     if (get_transient($lock_key)) {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create SKIPPED: already running (lock present). ===');
-        return;
+        return ['ok' => false, 'reason' => 'locked', 'created' => 0, 'more' => true, 'elapsed' => 0.0];
     }
-    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, VI_MAX_CREATE_SEC + 60);
+    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, $budget_sec + 60);
 
     @ignore_user_abort(true);
-    if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_CREATE_SEC + 30);
-    $run_t0 = microtime(true);
-    $time_up = function() use ($run_t0) { return (microtime(true) - $run_t0) >= VI_MAX_CREATE_SEC; };
+    if (function_exists('set_time_limit')) @set_time_limit($budget_sec + 30);
+    $time_up = function() use ($run_t0, $budget_sec) { return (microtime(true) - $run_t0) >= $budget_sec; };
 
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create START ===');
 
@@ -1428,18 +1439,20 @@ function vi_create_new_products() {
     if ($feed === null) {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create END (feed error) ===');
         delete_transient($lock_key);
-        return;
+        return ['ok' => false, 'reason' => 'feed', 'created' => 0, 'more' => true,
+                'elapsed' => round(microtime(true) - $run_t0, 2)];
     }
 
+    $stopped_early = false;
     $items = $feed['items'];
-    $create_limit = (int) VI_MAX_VEHICLES_PER_RUN;
+    $create_limit = ($item_cap === null) ? (int) VI_MAX_VEHICLES_PER_RUN : max(0, (int) $item_cap);
     if ($create_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run create limit: VI_MAX_VEHICLES_PER_RUN={$create_limit}");
 
     $created = 0;
 
     foreach ($items as $idx => $data) {
-        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during CREATE pass."); break; }
-        if ($create_limit > 0 && $created >= $create_limit) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Create cap reached; stopping."); break; }
+        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during CREATE pass."); $stopped_early = true; break; }
+        if ($create_limit > 0 && $created >= $create_limit) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Create cap reached; stopping."); $stopped_early = true; break; }
 
         $sku   = isset($data['id']) ? (string)$data['id'] : '';
         $name  = isset($data['vehicle_description']) ? (string)$data['vehicle_description'] : '';
@@ -1578,24 +1591,35 @@ function vi_create_new_products() {
     $run_s = round((microtime(true) - $run_t0), 2);
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Create END — created={$created}, elapsed={$run_s}s ===");
     delete_transient($lock_key);
+
+    return ['ok' => true, 'reason' => $stopped_early ? 'partial' : 'complete',
+            'created' => $created, 'more' => $stopped_early, 'elapsed' => $run_s];
 }
 
 // === Update: sync existing products from feed ===============================
 
-function vi_update_existing_products() {
+/**
+ * @param int|null $budget_sec Wall-clock budget for this pass. Null = VI_MAX_UPDATE_SEC.
+ * @param int|null $item_cap   Max products to update. Null = VI_MAX_UPDATES_PER_RUN.
+ * @return array{ok:bool,reason:string,updated:int,more:bool,elapsed:float}
+ *         See vi_create_new_products() — same contract, same defaults-preserve-cron rule.
+ */
+function vi_update_existing_products($budget_sec = null, $item_cap = null) {
     global $image_labels;
+
+    $budget_sec = ($budget_sec === null) ? (int) VI_MAX_UPDATE_SEC : max(5, (int) $budget_sec);
+    $run_t0     = microtime(true);
 
     $lock_key = 'vi_update_running_lock';
     if (get_transient($lock_key)) {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update SKIPPED: already running (lock present). ===');
-        return;
+        return ['ok' => false, 'reason' => 'locked', 'updated' => 0, 'more' => true, 'elapsed' => 0.0];
     }
-    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, VI_MAX_UPDATE_SEC + 60);
+    set_transient($lock_key, function_exists('getmypid') ? (getmypid() ?: 1) : 1, $budget_sec + 60);
 
     @ignore_user_abort(true);
-    if (function_exists('set_time_limit')) @set_time_limit(VI_MAX_UPDATE_SEC + 30);
-    $run_t0 = microtime(true);
-    $time_up = function() use ($run_t0) { return (microtime(true) - $run_t0) >= VI_MAX_UPDATE_SEC; };
+    if (function_exists('set_time_limit')) @set_time_limit($budget_sec + 30);
+    $time_up = function() use ($run_t0, $budget_sec) { return (microtime(true) - $run_t0) >= $budget_sec; };
 
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update START ===');
 
@@ -1603,19 +1627,21 @@ function vi_update_existing_products() {
     if ($feed === null) {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update END (feed error) ===');
         delete_transient($lock_key);
-        return;
+        return ['ok' => false, 'reason' => 'feed', 'updated' => 0, 'more' => true,
+                'elapsed' => round(microtime(true) - $run_t0, 2)];
     }
 
+    $stopped_early = false;
     $items        = $feed['items'];
     $feed_sku_set = $feed['feed_sku_set'];
-    $update_limit = (int) VI_MAX_UPDATES_PER_RUN;
+    $update_limit = ($item_cap === null) ? (int) VI_MAX_UPDATES_PER_RUN : max(0, (int) $item_cap);
     if ($update_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run update limit: VI_MAX_UPDATES_PER_RUN={$update_limit}");
 
     $updated   = 0;
     $processed = 0;
 
     foreach ($items as $idx => $data) {
-        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during UPDATE pass."); break; }
+        if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during UPDATE pass."); $stopped_early = true; break; }
 
         $processed++;
         $sku   = isset($data['id']) ? (string)$data['id'] : '';
@@ -1637,6 +1663,7 @@ function vi_update_existing_products() {
 
         if ($update_limit > 0 && $updated >= $update_limit) {
             sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Update cap reached; skipping further updates this run.");
+            $stopped_early = true;
             break;
         }
 
@@ -1800,6 +1827,9 @@ function vi_update_existing_products() {
     $run_s = round((microtime(true) - $run_t0), 2);
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Update END — updated={$updated}, processed={$processed}/{" . count($items) . "}, elapsed={$run_s}s ===");
     delete_transient($lock_key);
+
+    return ['ok' => true, 'reason' => $stopped_early ? 'partial' : 'complete',
+            'updated' => $updated, 'more' => $stopped_early, 'elapsed' => $run_s];
 }
 
 // === Legacy wrapper (calls both) ============================================
@@ -2514,6 +2544,230 @@ add_action('init', function () {
     echo "Log file: " . sa_motorlease_log_path() . "\n";
     echo "Done. Tail the log for full output.\n";
     exit;
+}, 20);
+
+// === Batched import runner (progress page + JSON batch endpoint) ============
+//
+// Why this exists: ?vi_run_import runs the whole create+update pass inside a
+// single HTTP request. Its budgets allow up to VI_MAX_CREATE_SEC +
+// VI_MAX_UPDATE_SEC (600s by default) and the import writes progress to the log
+// rather than the response, so the connection sits silent for minutes. Nothing
+// in the chain tolerates that: Cloudflare cuts the origin off at 100s (524),
+// and PHP-FPM's request_terminate_timeout and nginx's proxy_read_timeout are
+// both outside what set_time_limit() can raise. The request died before the
+// import finished, every time.
+//
+// This runs the same two functions in short slices instead — each HTTP request
+// does ~20s of work and returns — with the browser driving the loop, exactly
+// like the image-sync progress page above. No single request is ever long
+// enough to hit a proxy or FPM limit, and no WP-Cron loopback is involved.
+//
+// Both passes are resumable by construction: create skips SKUs that already
+// exist, update skips products whose _vi_write_date matches the feed. So
+// calling them repeatedly walks through the backlog, and `more` in the JSON
+// says whether the pass stopped on its cap/budget (keep going) or reached the
+// end of the feed (done).
+
+/** Seconds of work per slice. Short enough that no proxy or FPM limit applies. */
+if (!defined('VI_IMPORT_SLICE_SEC')) define('VI_IMPORT_SLICE_SEC', 20);
+
+add_action('init', function () {
+    if (!isset($_GET['vi_import_ui'])) return;
+
+    if (!is_user_logged_in() || !current_user_can('manage_options')) {
+        status_header(403);
+        exit('Forbidden - admin access required');
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        wp_die('Security check failed. Use the <a href="' . esc_url(admin_url('admin.php?page=sa-motorlease-status')) . '">SA Motorlease Status</a> page.', 'Forbidden', ['response' => 403]);
+    }
+
+    $mode = isset($_GET['mode']) ? sanitize_key($_GET['mode']) : 'both';
+    if (!in_array($mode, ['create', 'update', 'both'], true)) $mode = 'both';
+
+    header('Content-Type: text/html; charset=utf-8');
+    header('X-Accel-Buffering: no');
+    ?><!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vehicle Import</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Courier New',monospace;background:#0d1117;color:#c9d1d9;padding:24px;font-size:14px}
+h1{font-size:18px;color:#f0f6fc;margin-bottom:16px;display:flex;align-items:center;gap:10px}
+.badge{font-size:11px;font-weight:700;padding:3px 10px;border-radius:12px;color:#0d1117;background:#238636}
+#status{color:#8b949e;font-size:13px;margin-bottom:16px}
+.stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.stat{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:10px 16px;min-width:110px}
+.stat-label{font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
+.stat-value{font-size:26px;font-weight:700;color:#f0f6fc;margin-top:2px}
+.has-value{color:#3fb950 !important}
+button{font-family:inherit;font-size:13px;padding:7px 16px;border-radius:6px;border:1px solid #30363d;background:#21262d;color:#c9d1d9;cursor:pointer;margin-bottom:16px}
+button:hover{background:#30363d}
+button[disabled]{opacity:.5;cursor:default}
+#log{background:#010409;border:1px solid #30363d;border-radius:6px;height:380px;overflow-y:auto;padding:12px;font-size:12px;line-height:1.7}
+.lb{color:#8b949e;border-top:1px solid #21262d;padding-top:3px;margin-top:3px}
+.lb:first-child{border-top:none}
+.lc{color:#d29922}
+.le{color:#f85149}
+.ld{color:#3fb950;font-weight:700;margin-top:6px}
+</style>
+</head>
+<body>
+<h1>Vehicle Import <span class="badge"><?= esc_html(strtoupper($mode)) ?></span></h1>
+<div id="status">Starting…</div>
+<div class="stats">
+  <div class="stat"><div class="stat-label">Created</div><div class="stat-value" id="s-created">0</div></div>
+  <div class="stat"><div class="stat-label">Updated</div><div class="stat-value" id="s-updated">0</div></div>
+  <div class="stat"><div class="stat-label">Slices</div><div class="stat-value" id="s-slices">0</div></div>
+  <div class="stat"><div class="stat-label">Elapsed</div><div class="stat-value" id="s-elapsed">0s</div></div>
+</div>
+<button id="stop">Stop after this slice</button>
+<div id="log"></div>
+<script>
+const MODE  = <?= wp_json_encode($mode) ?>;
+const NONCE = <?= wp_json_encode(wp_create_nonce('sa_motorlease_admin_action')) ?>;
+
+let phase   = (MODE === 'update') ? 'update' : 'create';
+let slices  = 0, created = 0, updated = 0, stopping = false;
+const t0    = Date.now();
+
+const log = document.getElementById('log');
+function addLog(html, cls) {
+    const d = document.createElement('div');
+    d.className = cls || 'lb';
+    d.innerHTML = html;
+    log.appendChild(d);
+    log.scrollTop = log.scrollHeight;
+}
+function setStat(id, val) {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    if (val && val !== '0') el.classList.add('has-value');
+}
+function tick() {
+    setStat('s-elapsed', Math.round((Date.now() - t0) / 1000) + 's');
+}
+setInterval(tick, 1000);
+
+document.getElementById('stop').addEventListener('click', function () {
+    stopping = true;
+    this.disabled = true;
+    this.textContent = 'Stopping…';
+    addLog('Stop requested — finishing the slice in flight.', 'lc');
+});
+
+function finish(msg) {
+    document.getElementById('status').textContent = msg;
+    document.getElementById('stop').disabled = true;
+    tick();
+}
+
+async function runSlice() {
+    slices++;
+    setStat('s-slices', String(slices));
+    document.getElementById('status').textContent =
+        'Running ' + phase + ' slice ' + slices + '… (safe to leave open; keep this tab in the foreground)';
+
+    const p = new URLSearchParams({vi_import_batch: 1, mode: phase, _wpnonce: NONCE});
+
+    let data;
+    try {
+        const r = await fetch('?' + p.toString());
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        data = await r.json();
+    } catch (e) {
+        addLog('&#9888; Slice failed: ' + e.message + ' — the import is resumable, reload to carry on.', 'le');
+        return finish('Error — see above');
+    }
+
+    if (data.reason === 'locked') {
+        addLog('Slice ' + slices + ': ' + phase + ' is locked (a scheduled run holds it) — retrying in 5s.', 'lc');
+        if (stopping) return finish('Stopped');
+        return setTimeout(runSlice, 5000);
+    }
+    if (data.reason === 'feed') {
+        addLog('&#9888; Feed fetch failed this slice — retrying in 5s.', 'le');
+        if (stopping) return finish('Stopped');
+        return setTimeout(runSlice, 5000);
+    }
+
+    const n = (phase === 'create') ? (data.created || 0) : (data.updated || 0);
+    if (phase === 'create') { created += n; setStat('s-created', String(created)); }
+    else                    { updated += n; setStat('s-updated', String(updated)); }
+
+    addLog('Slice ' + slices + ' (' + phase + '): ' + n + ' ' +
+        (phase === 'create' ? 'created' : 'updated') + ' in ' + data.elapsed + 's' +
+        (data.more ? '' : ' — pass complete'));
+
+    if (stopping) {
+        return finish('Stopped — ' + created + ' created, ' + updated + ' updated. Reload to carry on.');
+    }
+
+    if (data.more) return setTimeout(runSlice, 250);
+
+    // Pass finished. Move to update if this run covers both.
+    if (phase === 'create' && MODE === 'both') {
+        phase = 'update';
+        addLog('Create pass complete — starting update pass.', 'lc');
+        return setTimeout(runSlice, 250);
+    }
+
+    addLog('Done — ' + created + ' created, ' + updated + ' updated across ' + slices + ' slices.', 'ld');
+    finish('Complete ✓');
+}
+
+runSlice();
+</script>
+</body></html>
+<?php
+    exit;
+}, 20);
+
+// === JSON slice endpoint for the import progress page =======================
+// Called by the progress page JS — not intended for direct use.
+add_action('init', function () {
+    if (!isset($_GET['vi_import_batch'])) return;
+
+    if (!is_user_logged_in() || !current_user_can('manage_options')) {
+        status_header(403);
+        wp_send_json_error('Forbidden', 403);
+    }
+    if (!isset($_GET['_wpnonce']) || !wp_verify_nonce($_GET['_wpnonce'], 'sa_motorlease_admin_action')) {
+        status_header(403);
+        wp_send_json_error('Bad nonce', 403);
+    }
+
+    $mode   = isset($_GET['mode']) ? sanitize_key($_GET['mode']) : 'create';
+    if (!in_array($mode, ['create', 'update'], true)) $mode = 'create';
+    $budget = (int) VI_IMPORT_SLICE_SEC;
+
+    @ignore_user_abort(true);
+    if (function_exists('set_time_limit')) @set_time_limit($budget + 30);
+
+    // No item cap: the time budget alone decides how much a slice does, so a
+    // fast run isn't throttled to VI_MAX_VEHICLES_PER_RUN per HTTP round-trip.
+    try {
+        $res = ($mode === 'create')
+            ? vi_create_new_products($budget, 0)
+            : vi_update_existing_products($budget, 0);
+    } catch (\Throwable $e) {
+        $msg = sprintf('%s: %s in %s:%d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_ERROR, "vi_import_batch {$mode} threw: {$msg}");
+        delete_transient($mode === 'create' ? 'vi_create_running_lock' : 'vi_update_running_lock');
+        wp_send_json(['ok' => false, 'reason' => 'exception', 'message' => $msg, 'more' => false]);
+    }
+
+    wp_send_json([
+        'ok'      => !empty($res['ok']),
+        'reason'  => $res['reason'] ?? 'unknown',
+        'created' => (int) ($res['created'] ?? 0),
+        'updated' => (int) ($res['updated'] ?? 0),
+        'more'    => !empty($res['more']),
+        'elapsed' => $res['elapsed'] ?? 0,
+    ]);
 }, 20);
 
 // === Bulk image sync (detect + apply feed image changes) ====================
@@ -6946,7 +7200,8 @@ function sa_motorlease_render_status_page() {
         <?php
         $tools = [
             // [ label, query_arg, description, dangerous, new_tab ]
-            [ 'Run import now (create+update)',  'vi_run_import',                  'Run create + update import in-process. Bypasses WP-Cron loopback. Tail the plugin log for output.', false, true  ],
+            [ 'Run import now (progress UI)',    'vi_import_ui',                   'Run create + update in short slices with live progress. Each request does ~20s of work, so it never hits a proxy or PHP timeout — use this one.', false, true  ],
+            [ 'Run import now (single request)', 'vi_run_import',                  'Legacy fallback: runs the whole create+update pass in one request. Can exceed proxy/PHP-FPM timeouts on a large backlog — prefer the progress UI above.', false, true  ],
             [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
             [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
             [ 'Cleanup sold products',          'cleanup_sold_products',          'Mark in-feed sold vehicles and clean up sold status.',                  false, false ],
