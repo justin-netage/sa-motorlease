@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.15
+Stable tag: 2.6.16
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.16 =
+* **The PACE base URL setting now actually applies to the vehicle feeds.** It only ever reached the three lead endpoints. Every data-feed (`paceWebPrepData`) and image-feed (`paceWebPrepImages`) call had `https://paceapp-server.azurewebsites.net` written in as a literal and never read the setting at all — so pointing the field at the preview host still imported from production, and a query string like `?env=prod` was silently dropped from every feed request while being correctly applied to leads. All 13 feed and image call sites now resolve through `sa_motorlease_pace_url()`: the importer (`vi_fetch_feed`, `vi_collect_usable_images`, `vi_vehicle_has_images`, `vi_prepare_images_from_feed_for_vehicle`), the image rebuilder and `?test_image_feed`, and the sold/missing/backfill utilities. Query strings survive the `/id/{sku}` path segment on image URLs, which naive concatenation would have corrupted. With the setting at its default the resolved URLs are byte-identical to the old literals, so nothing changes until the field is changed. The setting's help text no longer claims the query string reaches "every endpoint" when it reached three, and the Status page's "Example feed endpoint" row (added in 2.6.13) now shows a URL the importer genuinely calls rather than a hypothetical one.
+* `process_images_for_existing_vehicle()` lost its `$domain` parameter, which only ever carried that same hardcoded literal. PHP ignores extra arguments to userland functions, so any stale two-argument call still works.
 
 = 2.6.15 =
 Fixes the "Invalid API response (missing lead_id)" error users saw on `/qualify-lead` when the PACE API was the thing that failed, and adds a site notice for telling visitors about an outage without taking the site down.
