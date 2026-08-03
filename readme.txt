@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.16
+Stable tag: 2.6.17
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,11 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.17 =
+* **"Run import now" no longer times out.** It ran the whole create+update pass inside one HTTP request. The budgets allow up to `VI_MAX_CREATE_SEC` + `VI_MAX_UPDATE_SEC` (600s by default) and the import writes progress to the log rather than the response, so the connection sat silent for minutes — which nothing in the chain tolerates. Cloudflare cuts the origin off at 100s (524), and PHP-FPM's `request_terminate_timeout` and nginx's `proxy_read_timeout` are both outside what `set_time_limit()` can raise, so the request died before the import finished every time. There's now a **Run import now (progress UI)** action that runs the same two functions in ~20s slices with the browser driving the loop — the same pattern the image-sync progress page already used. No single request is long enough to hit a proxy or FPM limit, and no WP-Cron loopback is involved. Live created/updated counts, a slice log, and a Stop button that finishes the slice in flight. Both passes are resumable by construction (create skips existing SKUs, update skips products whose `_vi_write_date` matches the feed), so stopping or losing the tab costs nothing — reopening carries on. If a scheduled run holds the lock the UI says so and retries rather than failing. Slice length is `VI_IMPORT_SLICE_SEC` (default 20).
+* `vi_create_new_products()` and `vi_update_existing_products()` take optional budget and cap arguments and return a summary (`created`/`updated`, and `more` — whether the pass stopped on its cap/budget or reached the end of the feed). Both default to the existing constants, so the hourly crons and the legacy wrapper behave exactly as before.
+* The old single-request trigger is kept as **Run import now (single request)** for the case where a browser tab isn't available, with its timeout caveat stated on the button.
 
 = 2.6.16 =
 * **The PACE base URL setting now actually applies to the vehicle feeds.** It only ever reached the three lead endpoints. Every data-feed (`paceWebPrepData`) and image-feed (`paceWebPrepImages`) call had `https://paceapp-server.azurewebsites.net` written in as a literal and never read the setting at all — so pointing the field at the preview host still imported from production, and a query string like `?env=prod` was silently dropped from every feed request while being correctly applied to leads. All 13 feed and image call sites now resolve through `sa_motorlease_pace_url()`: the importer (`vi_fetch_feed`, `vi_collect_usable_images`, `vi_vehicle_has_images`, `vi_prepare_images_from_feed_for_vehicle`), the image rebuilder and `?test_image_feed`, and the sold/missing/backfill utilities. Query strings survive the `/id/{sku}` path segment on image URLs, which naive concatenation would have corrupted. With the setting at its default the resolved URLs are byte-identical to the old literals, so nothing changes until the field is changed. The setting's help text no longer claims the query string reaches "every endpoint" when it reached three, and the Status page's "Example feed endpoint" row (added in 2.6.13) now shows a URL the importer genuinely calls rather than a hypothetical one.
