@@ -1390,6 +1390,44 @@ function vi_feed_cache_clear() {
 }
 
 /**
+ * Clear the _vi_write_date marker so the next update pass treats the product as
+ * changed.
+ *
+ * The update pass gates every single field — price, attributes, images,
+ * categories — on `write_date` differing from this stored marker. Anything PACE
+ * changes *without* bumping write_date is therefore invisible to the importer,
+ * and the run reports success having skipped the vehicle. Deposit amounts are
+ * the known case. Clearing the marker is what forces a genuine refresh; editing
+ * or deleting the product's attributes does nothing, because the code that
+ * rewrites them sits behind the same gate.
+ *
+ * @param string $sku Limit to one vehicle. Empty = every vehicle (full refresh).
+ * @return string Human-readable summary for the progress page.
+ */
+function vi_clear_write_date_markers($sku = '') {
+    $sku = trim((string) $sku);
+
+    if ($sku !== '') {
+        $pid = wc_get_product_id_by_sku($sku);
+        if (!$pid) {
+            return "No product found for SKU {$sku} — nothing cleared.";
+        }
+        delete_post_meta($pid, '_vi_write_date');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN,
+            "Force refresh: cleared _vi_write_date for sku={$sku} (product_id={$pid})");
+        return "Cleared the write-date marker for SKU {$sku} (product #{$pid}) — it will be refreshed in full.";
+    }
+
+    // delete_post_meta_by_key() rather than a direct DELETE: it invalidates the
+    // meta cache for every affected post, which a raw query would not.
+    delete_post_meta_by_key('_vi_write_date');
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN,
+        'Force refresh: cleared _vi_write_date on all products (full refresh)');
+    return 'Cleared the write-date marker on every vehicle — all of them will be refreshed in full. '
+         . 'This re-syncs images too, so expect it to take a while.';
+}
+
+/**
  * @param int $cache_ttl Seconds a cached copy may be reused. 0 (the default,
  *        and what both crons use) always goes to the network.
  *
@@ -2653,6 +2691,16 @@ add_action('init', function () {
     // to see it applied. Slices within the run then share one fetch.
     vi_feed_cache_clear();
 
+    // ?force=1 (all) / ?force_sku=XXX (one vehicle): clear the write-date
+    // marker(s) before running, so vehicles whose data changed in PACE without
+    // a write_date bump (deposits are the known case) actually get refreshed.
+    $force_notice = '';
+    if (!empty($_GET['force_sku'])) {
+        $force_notice = vi_clear_write_date_markers(sanitize_text_field((string) $_GET['force_sku']));
+    } elseif (!empty($_GET['force'])) {
+        $force_notice = vi_clear_write_date_markers('');
+    }
+
     header('Content-Type: text/html; charset=utf-8');
     header('X-Accel-Buffering: no');
     ?><!DOCTYPE html>
@@ -2685,6 +2733,11 @@ button[disabled]{opacity:.5;cursor:default}
 </head>
 <body>
 <h1>Vehicle Import <span class="badge"><?= esc_html(strtoupper($mode)) ?></span></h1>
+<?php if ($force_notice !== '') : ?>
+<div style="background:#161b22;border:1px solid #d29922;border-radius:6px;padding:10px 14px;margin-bottom:16px;color:#d29922;font-size:13px">
+    <?= esc_html($force_notice) ?>
+</div>
+<?php endif; ?>
 <div id="status">Starting…</div>
 <div class="stats">
   <div class="stat"><div class="stat-label">Created</div><div class="stat-value" id="s-created">0</div></div>
@@ -7281,7 +7334,7 @@ function sa_motorlease_render_status_page() {
         <?php
         $tools = [
             // [ label, query_arg, description, dangerous, new_tab ]
-            [ 'Run import now (progress UI)',    'vi_import_ui',                   'Run create + update in short slices with live progress. Each request does ~20s of work, so it never hits a proxy or PHP timeout — use this one.', false, true  ],
+            [ 'Run import now (progress UI)',    'vi_import_ui',                   'Run create + update in short slices with live progress. Each request does ~20s of work, so it never hits a proxy or PHP timeout — use this one. Add &force_sku=SKU to fully refresh one vehicle whose data changed in PACE without a write_date bump (e.g. deposit edits), or &force=1 to refresh all.', false, true  ],
             [ 'Run import now (single request)', 'vi_run_import',                  'Legacy fallback: runs the whole create+update pass in one request. Can exceed proxy/PHP-FPM timeouts on a large backlog — prefer the progress UI above.', false, true  ],
             [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
             [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
