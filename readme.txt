@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.17
+Stable tag: 2.6.18
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.18 =
+* **Fixes "Feed fetch failed this slice" in the 2.6.17 batched import runner.** The runner calls `vi_fetch_feed()` once per slice, which turned a twice-hourly request into one every ~20s for the length of a run — enough to get throttled or time out against the PACE host, and every failure aborted a slice that would otherwise have done useful work. The parsed feed is now cached across the slices of a single run (`VI_FEED_CACHE_SEC`, default 180s, compressed before storing since the payload is close enough to the ~1 MB value ceiling some object caches enforce that storing it raw risks being silently dropped). Opening the progress page clears the cache first, so a run always starts against fresh data — you still see a change made in PACE seconds earlier. Both hourly crons are unaffected: the TTL defaults to 0, which always goes to the network.
+* **The runner now says *why* the feed failed.** "Feed fetch failed" covered three quite different causes — transport error, a non-200 from PACE, or an unparseable body — and finding out which meant going to the log. The specific reason is now shown inline, and after 5 consecutive failures the run stops with an explanation instead of retrying forever. Retry backoff went from 5s to 10s.
 
 = 2.6.17 =
 * **"Run import now" no longer times out.** It ran the whole create+update pass inside one HTTP request. The budgets allow up to `VI_MAX_CREATE_SEC` + `VI_MAX_UPDATE_SEC` (600s by default) and the import writes progress to the log rather than the response, so the connection sat silent for minutes — which nothing in the chain tolerates. Cloudflare cuts the origin off at 100s (524), and PHP-FPM's `request_terminate_timeout` and nginx's `proxy_read_timeout` are both outside what `set_time_limit()` can raise, so the request died before the import finished every time. There's now a **Run import now (progress UI)** action that runs the same two functions in ~20s slices with the browser driving the loop — the same pattern the image-sync progress page already used. No single request is long enough to hit a proxy or FPM limit, and no WP-Cron loopback is involved. Live created/updated counts, a slice log, and a Stop button that finishes the slice in flight. Both passes are resumable by construction (create skips existing SKUs, update skips products whose `_vi_write_date` matches the feed), so stopping or losing the tab costs nothing — reopening carries on. If a scheduled run holds the lock the UI says so and retries rather than failing. Slice length is `VI_IMPORT_SLICE_SEC` (default 20).
