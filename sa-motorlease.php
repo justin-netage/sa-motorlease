@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.17
+ * Version: 2.6.18
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.17' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.18' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -1367,13 +1367,102 @@ function vi_vehicle_has_images($vehicle_id) {
  * Fetch and parse the vehicle feed. Returns array of items on success, or null on failure.
  * Also returns the feed_sku_set for prune logic.
  */
-function vi_fetch_feed() {
+/** How long a fetched feed may be reused across slices of one manual run. */
+if (!defined('VI_FEED_CACHE_SEC')) define('VI_FEED_CACHE_SEC', 180);
+
+const VI_FEED_CACHE_KEY = 'vi_feed_cache';
+
+/**
+ * Last reason vi_fetch_feed() returned null, for surfacing in the UI. The log
+ * has always carried this; the batched runner needs it in the response too, so
+ * "feed fetch failed" doesn't send the operator to the log to find out which of
+ * three quite different things went wrong.
+ */
+function vi_feed_last_error($set = null) {
+    static $err = '';
+    if ($set !== null) $err = (string) $set;
+    return $err;
+}
+
+/** Drop the cached feed so the next fetch goes to the network. */
+function vi_feed_cache_clear() {
+    delete_transient(VI_FEED_CACHE_KEY);
+}
+
+/**
+ * Clear the _vi_write_date marker so the next update pass treats the product as
+ * changed.
+ *
+ * The update pass gates every single field — price, attributes, images,
+ * categories — on `write_date` differing from this stored marker. Anything PACE
+ * changes *without* bumping write_date is therefore invisible to the importer,
+ * and the run reports success having skipped the vehicle. Deposit amounts are
+ * the known case. Clearing the marker is what forces a genuine refresh; editing
+ * or deleting the product's attributes does nothing, because the code that
+ * rewrites them sits behind the same gate.
+ *
+ * @param string $sku Limit to one vehicle. Empty = every vehicle (full refresh).
+ * @return string Human-readable summary for the progress page.
+ */
+function vi_clear_write_date_markers($sku = '') {
+    $sku = trim((string) $sku);
+
+    if ($sku !== '') {
+        $pid = wc_get_product_id_by_sku($sku);
+        if (!$pid) {
+            return "No product found for SKU {$sku} — nothing cleared.";
+        }
+        delete_post_meta($pid, '_vi_write_date');
+        sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN,
+            "Force refresh: cleared _vi_write_date for sku={$sku} (product_id={$pid})");
+        return "Cleared the write-date marker for SKU {$sku} (product #{$pid}) — it will be refreshed in full.";
+    }
+
+    // delete_post_meta_by_key() rather than a direct DELETE: it invalidates the
+    // meta cache for every affected post, which a raw query would not.
+    delete_post_meta_by_key('_vi_write_date');
+    sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN,
+        'Force refresh: cleared _vi_write_date on all products (full refresh)');
+    return 'Cleared the write-date marker on every vehicle — all of them will be refreshed in full. '
+         . 'This re-syncs images too, so expect it to take a while.';
+}
+
+/**
+ * @param int $cache_ttl Seconds a cached copy may be reused. 0 (the default,
+ *        and what both crons use) always goes to the network.
+ *
+ * The batched admin runner passes a TTL because it calls this once per slice.
+ * Uncached that turned a twice-hourly request into one every ~20s for the whole
+ * run, which is enough to get throttled or time out against the PACE host — and
+ * every one of those failures aborts a slice that would otherwise have done
+ * useful work. The payload is compressed before storing: it's a few hundred KB
+ * of JSON, close enough to the ~1 MB value ceiling some object caches enforce
+ * that storing it raw risks being silently dropped on every write.
+ */
+function vi_fetch_feed($cache_ttl = 0) {
+    vi_feed_last_error('');
+    $cache_ttl = (int) $cache_ttl;
+
+    if ($cache_ttl > 0 && function_exists('gzuncompress')) {
+        $packed = get_transient(VI_FEED_CACHE_KEY);
+        if (is_string($packed) && $packed !== '') {
+            $raw = @gzuncompress((string) base64_decode($packed));
+            $hit = ($raw !== false) ? @unserialize($raw) : false;
+            if (is_array($hit) && isset($hit['items']) && is_array($hit['items'])) {
+                log_import_update('Feed: reusing cached copy (items=' . count($hit['items']) . ')');
+                return $hit;
+            }
+        }
+    }
+
     $feed_url = sa_motorlease_pace_url('/api/entity/paceWebPrepData');
     log_import_update('Fetch feed: ' . $feed_url);
 
     $t0 = microtime(true);
     $response = wp_remote_get($feed_url, ['timeout' => 45, 'headers' => ['Accept' => 'application/json']]);
     if (is_wp_error($response)) {
+        $msg = 'transport error: ' . $response->get_error_message();
+        vi_feed_last_error($msg);
         log_import_update('Feed request failed: ' . $response->get_error_message());
         return null;
     }
@@ -1384,12 +1473,14 @@ function vi_fetch_feed() {
     log_import_update("Feed HTTP {$code}; body_len=" . strlen((string)$body) . " in {$elapsed_ms}ms");
 
     if ($code !== 200) {
+        vi_feed_last_error("PACE returned HTTP {$code} after {$elapsed_ms}ms");
         log_import_update('Feed HTTP not 200; aborting.');
         return null;
     }
 
     $items = json_decode($body, true);
     if (!is_array($items)) {
+        vi_feed_last_error('response was not valid JSON (body_len=' . strlen((string)$body) . ')');
         log_import_update('Feed JSON parse failed or not array.');
         return null;
     }
@@ -1402,7 +1493,15 @@ function vi_fetch_feed() {
         if (!empty($row['id'])) $feed_skus[] = (string) $row['id'];
     }
 
-    return ['items' => $items, 'feed_sku_set' => array_fill_keys($feed_skus, true)];
+    $result = ['items' => $items, 'feed_sku_set' => array_fill_keys($feed_skus, true)];
+
+    if ($cache_ttl > 0 && function_exists('gzcompress')) {
+        $packed = base64_encode(gzcompress(serialize($result), 6));
+        set_transient(VI_FEED_CACHE_KEY, $packed, $cache_ttl);
+        log_import_update('Feed: cached for ' . $cache_ttl . 's (' . size_format(strlen($packed)) . ' packed)');
+    }
+
+    return $result;
 }
 
 // === Create: import new vehicles from feed ==================================
@@ -1416,7 +1515,7 @@ function vi_fetch_feed() {
  *         Both parameters default to the constants, so the hourly cron behaves
  *         exactly as before; the batched admin runner passes short budgets.
  */
-function vi_create_new_products($budget_sec = null, $item_cap = null) {
+function vi_create_new_products($budget_sec = null, $item_cap = null, $feed_cache_ttl = 0) {
     global $image_labels;
 
     $budget_sec = ($budget_sec === null) ? (int) VI_MAX_CREATE_SEC : max(5, (int) $budget_sec);
@@ -1435,11 +1534,12 @@ function vi_create_new_products($budget_sec = null, $item_cap = null) {
 
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create START ===');
 
-    $feed = vi_fetch_feed();
+    $feed = vi_fetch_feed($feed_cache_ttl);
     if ($feed === null) {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Create END (feed error) ===');
         delete_transient($lock_key);
         return ['ok' => false, 'reason' => 'feed', 'created' => 0, 'more' => true,
+                'message' => vi_feed_last_error(),
                 'elapsed' => round(microtime(true) - $run_t0, 2)];
     }
 
@@ -1604,7 +1704,7 @@ function vi_create_new_products($budget_sec = null, $item_cap = null) {
  * @return array{ok:bool,reason:string,updated:int,more:bool,elapsed:float}
  *         See vi_create_new_products() — same contract, same defaults-preserve-cron rule.
  */
-function vi_update_existing_products($budget_sec = null, $item_cap = null) {
+function vi_update_existing_products($budget_sec = null, $item_cap = null, $feed_cache_ttl = 0) {
     global $image_labels;
 
     $budget_sec = ($budget_sec === null) ? (int) VI_MAX_UPDATE_SEC : max(5, (int) $budget_sec);
@@ -1623,11 +1723,12 @@ function vi_update_existing_products($budget_sec = null, $item_cap = null) {
 
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update START ===');
 
-    $feed = vi_fetch_feed();
+    $feed = vi_fetch_feed($feed_cache_ttl);
     if ($feed === null) {
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, '=== Update END (feed error) ===');
         delete_transient($lock_key);
         return ['ok' => false, 'reason' => 'feed', 'updated' => 0, 'more' => true,
+                'message' => vi_feed_last_error(),
                 'elapsed' => round(microtime(true) - $run_t0, 2)];
     }
 
@@ -2585,6 +2686,21 @@ add_action('init', function () {
     $mode = isset($_GET['mode']) ? sanitize_key($_GET['mode']) : 'both';
     if (!in_array($mode, ['create', 'update', 'both'], true)) $mode = 'both';
 
+    // Opening the page starts a fresh run, so drop any cached feed — the
+    // operator has almost certainly just changed something in PACE and is here
+    // to see it applied. Slices within the run then share one fetch.
+    vi_feed_cache_clear();
+
+    // ?force=1 (all) / ?force_sku=XXX (one vehicle): clear the write-date
+    // marker(s) before running, so vehicles whose data changed in PACE without
+    // a write_date bump (deposits are the known case) actually get refreshed.
+    $force_notice = '';
+    if (!empty($_GET['force_sku'])) {
+        $force_notice = vi_clear_write_date_markers(sanitize_text_field((string) $_GET['force_sku']));
+    } elseif (!empty($_GET['force'])) {
+        $force_notice = vi_clear_write_date_markers('');
+    }
+
     header('Content-Type: text/html; charset=utf-8');
     header('X-Accel-Buffering: no');
     ?><!DOCTYPE html>
@@ -2617,6 +2733,11 @@ button[disabled]{opacity:.5;cursor:default}
 </head>
 <body>
 <h1>Vehicle Import <span class="badge"><?= esc_html(strtoupper($mode)) ?></span></h1>
+<?php if ($force_notice !== '') : ?>
+<div style="background:#161b22;border:1px solid #d29922;border-radius:6px;padding:10px 14px;margin-bottom:16px;color:#d29922;font-size:13px">
+    <?= esc_html($force_notice) ?>
+</div>
+<?php endif; ?>
 <div id="status">Starting…</div>
 <div class="stats">
   <div class="stat"><div class="stat-label">Created</div><div class="stat-value" id="s-created">0</div></div>
@@ -2632,6 +2753,10 @@ const NONCE = <?= wp_json_encode(wp_create_nonce('sa_motorlease_admin_action')) 
 
 let phase   = (MODE === 'update') ? 'update' : 'create';
 let slices  = 0, created = 0, updated = 0, stopping = false;
+// Retrying a dead feed forever just hammers PACE and tells the operator
+// nothing, so bail out after a few consecutive failures.
+let feedFails = 0;
+const MAX_FEED_FAILS = 5;
 const t0    = Date.now();
 
 const log = document.getElementById('log');
@@ -2689,10 +2814,18 @@ async function runSlice() {
         return setTimeout(runSlice, 5000);
     }
     if (data.reason === 'feed') {
-        addLog('&#9888; Feed fetch failed this slice — retrying in 5s.', 'le');
+        feedFails++;
+        addLog('&#9888; Feed fetch failed (' + feedFails + '/' + MAX_FEED_FAILS + '): ' +
+            (data.message || 'no detail') + ' — retrying in 10s.', 'le');
         if (stopping) return finish('Stopped');
-        return setTimeout(runSlice, 5000);
+        if (feedFails >= MAX_FEED_FAILS) {
+            addLog('Giving up: the PACE feed is not responding. Nothing was left half-done — ' +
+                'the import is resumable, so reload once the feed is back.', 'le');
+            return finish('Feed unavailable — see above');
+        }
+        return setTimeout(runSlice, 10000);
     }
+    feedFails = 0;
 
     const n = (phase === 'create') ? (data.created || 0) : (data.updated || 0);
     if (phase === 'create') { created += n; setStat('s-created', String(created)); }
@@ -2751,8 +2884,8 @@ add_action('init', function () {
     // fast run isn't throttled to VI_MAX_VEHICLES_PER_RUN per HTTP round-trip.
     try {
         $res = ($mode === 'create')
-            ? vi_create_new_products($budget, 0)
-            : vi_update_existing_products($budget, 0);
+            ? vi_create_new_products($budget, 0, VI_FEED_CACHE_SEC)
+            : vi_update_existing_products($budget, 0, VI_FEED_CACHE_SEC);
     } catch (\Throwable $e) {
         $msg = sprintf('%s: %s in %s:%d', get_class($e), $e->getMessage(), $e->getFile(), $e->getLine());
         sa_motorlease_log('import', SA_MOTORLEASE_LOG_ERROR, "vi_import_batch {$mode} threw: {$msg}");
@@ -2763,6 +2896,7 @@ add_action('init', function () {
     wp_send_json([
         'ok'      => !empty($res['ok']),
         'reason'  => $res['reason'] ?? 'unknown',
+        'message' => (string) ($res['message'] ?? ''),
         'created' => (int) ($res['created'] ?? 0),
         'updated' => (int) ($res['updated'] ?? 0),
         'more'    => !empty($res['more']),
@@ -7200,7 +7334,7 @@ function sa_motorlease_render_status_page() {
         <?php
         $tools = [
             // [ label, query_arg, description, dangerous, new_tab ]
-            [ 'Run import now (progress UI)',    'vi_import_ui',                   'Run create + update in short slices with live progress. Each request does ~20s of work, so it never hits a proxy or PHP timeout — use this one.', false, true  ],
+            [ 'Run import now (progress UI)',    'vi_import_ui',                   'Run create + update in short slices with live progress. Each request does ~20s of work, so it never hits a proxy or PHP timeout — use this one. Add &force_sku=SKU to fully refresh one vehicle whose data changed in PACE without a write_date bump (e.g. deposit edits), or &force=1 to refresh all.', false, true  ],
             [ 'Run import now (single request)', 'vi_run_import',                  'Legacy fallback: runs the whole create+update pass in one request. Can exceed proxy/PHP-FPM timeouts on a large backlog — prefer the progress UI above.', false, true  ],
             [ 'Image sync (progress UI)',        'vi_sync_images',                 'Open the live image-sync progress page (runs in your browser tab).',   false, true  ],
             [ 'Image repair (progress UI)',      'vi_repair_images',               'Open the image-repair progress page (runs in your browser tab).',      false, true  ],
