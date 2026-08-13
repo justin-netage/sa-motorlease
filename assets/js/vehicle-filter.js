@@ -386,7 +386,7 @@
        live result count ("Show N vehicles"). */
     function setApplyCount(total) {
         if (typeof total === 'undefined') return;
-        var label = (Number(total) === 1) ? 'Show 1 vehicle' : 'Show ' + total + ' vehicles';
+        var label = (Number(total) === 1) ? 'Showing 1 Vehicle' : 'Showing ' + total + ' Vehicles';
         if (applyBtn) applyBtn.textContent = label;
         if (filterBtn) filterBtn.textContent = label;
     }

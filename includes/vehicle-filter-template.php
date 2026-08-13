@@ -118,8 +118,8 @@ $sel    = $initial['facets'];
                 <?php
                 // Server-render the live count so the label is right before JS boots.
                 $sa_vf_show_label = ( (int) $result['total'] === 1 )
-                    ? 'Show 1 vehicle'
-                    : sprintf( 'Show %d vehicles', (int) $result['total'] );
+                    ? 'Showing 1 Vehicle'
+                    : sprintf( 'Showing %d Vehicles', (int) $result['total'] );
                 ?>
                 <div class="sa-vf-actions">
                     <button type="button" class="sa-vf-btn sa-vf-btn--filter"><?php echo esc_html( $sa_vf_show_label ); ?></button>
