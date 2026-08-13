@@ -116,13 +116,15 @@ $sel    = $initial['facets'];
                 </div>
 
                 <?php
-                // Server-render the live count so the label is right before JS boots.
-                $sa_vf_show_label = ( (int) $result['total'] === 1 )
-                    ? 'Showing 1 Vehicle'
-                    : sprintf( 'Showing %d Vehicles', (int) $result['total'] );
+                // Server-render the live count so the labels are right before JS
+                // boots: "Showing…" on desktop (status), "Show…" in the drawer
+                // (action).
+                $sa_vf_count_label = ( (int) $result['total'] === 1 )
+                    ? '1 Vehicle'
+                    : sprintf( '%d Vehicles', (int) $result['total'] );
                 ?>
                 <div class="sa-vf-actions">
-                    <button type="button" class="sa-vf-btn sa-vf-btn--filter"><?php echo esc_html( $sa_vf_show_label ); ?></button>
+                    <button type="button" class="sa-vf-btn sa-vf-btn--filter"><?php echo esc_html( 'Showing ' . $sa_vf_count_label ); ?></button>
                     <button type="button" class="sa-vf-btn sa-vf-btn--clear">Clear</button>
                 </div>
             </form>
@@ -130,7 +132,7 @@ $sel    = $initial['facets'];
             </div><?php // .sa-vf__sidebar-scroll ?>
             <div class="sa-vf__drawer-foot">
                 <button type="button" class="sa-vf-btn sa-vf-btn--clear sa-vf__drawer-clear">Clear</button>
-                <button type="button" class="sa-vf-btn sa-vf__drawer-apply"><?php echo esc_html( $sa_vf_show_label ); ?></button>
+                <button type="button" class="sa-vf-btn sa-vf__drawer-apply"><?php echo esc_html( 'Show ' . $sa_vf_count_label ); ?></button>
             </div>
         </aside>
 
