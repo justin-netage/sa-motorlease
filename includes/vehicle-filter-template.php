@@ -120,6 +120,7 @@ $sel    = $initial['facets'];
                     <button type="button" class="sa-vf-btn sa-vf-btn--clear">Clear</button>
                 </div>
             </form>
+            <div class="sa-vf__chips" aria-label="Active filters" hidden></div>
             </div><?php // .sa-vf__sidebar-scroll ?>
             <div class="sa-vf__drawer-foot">
                 <button type="button" class="sa-vf-btn sa-vf-btn--clear sa-vf__drawer-clear">Clear</button>
@@ -141,8 +142,6 @@ $sel    = $initial['facets'];
                     </select>
                 </label>
             </div>
-
-            <div class="sa-vf__chips" aria-label="Active filters" hidden></div>
 
             <div class="sa-vf__grid" aria-live="polite"><?php echo $result['html']; // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
 
