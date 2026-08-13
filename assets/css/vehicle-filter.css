@@ -295,6 +295,9 @@
     width: 100%;
     height: auto;
     min-height: 38px;
+    /* Flatsome gives every <select>/<button> a margin-bottom — kill it, the
+       .sa-vf-field wrappers own the spacing. */
+    margin: 0 !important;
     padding: 8px 32px 8px 11px; /* extra right padding clears the arrow */
     border: 1px solid var(--sa-vf-border);
     border-radius: var(--sa-vf-radius);
@@ -337,6 +340,13 @@
 .sa-vf-btn {
     display: inline-block;
     width: 100%;
+    /* margin/min-height/line-height guards stop the theme's global button
+       styling (min-height 2.5em, line-height 2.4em, margin-bottom) from
+       inflating these back to the old oversized look. */
+    margin: 0 !important;
+    min-height: 0 !important;
+    height: auto !important;
+    line-height: 1.4 !important;
     padding: 7px 14px;
     border: none;
     border-radius: var(--sa-vf-radius);
@@ -385,7 +395,10 @@
 .sa-vf .sa-vf-combo__search {
     display: block;
     width: calc(100% - 16px);
-    margin: 8px;
+    margin: 8px !important;
+    min-height: 0 !important;
+    height: auto !important;
+    box-shadow: none !important;
     padding: 7px 10px;
     border: 1px solid var(--sa-vf-border);
     border-radius: var(--sa-vf-radius);
@@ -404,6 +417,9 @@
 .sa-vf-combo__item {
     display: block;
     width: 100%;
+    margin: 0 !important;      /* theme button margin guard */
+    min-height: 0 !important;
+    line-height: 1.4 !important;
     padding: 8px 12px;
     border: none;
     background: none;
@@ -445,6 +461,8 @@
     display: inline-flex;
     align-items: center;
     gap: 6px;
+    margin: 0 !important;      /* theme button margin guard */
+    min-height: 0 !important;
     padding: 4px 10px;
     border: 1px solid var(--sa-vf-border);
     border-radius: 999px;
@@ -663,14 +681,22 @@
     display: none;
     position: fixed;
     left: 50%;
-    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+    /* Sized/positioned so its centre lines up with the WhatsApp float (HT
+       Click to Chat: 50px circle at bottom 15px → centre 40px off the bottom).
+       Explicit height + margin/line-height guards keep the theme's button
+       styling (margin-bottom 13px, line-height 2.4em) from shifting it. */
+    bottom: 20px;
+    height: 40px;
+    margin: 0 !important;
+    min-height: 0 !important;
+    line-height: 1 !important;
     transform: translateX(-50%);
     z-index: 9999;
     align-items: center;
     justify-content: center;
     gap: 8px;
     min-width: 150px;
-    padding: 8px 22px;
+    padding: 0 22px;
     border: none;
     border-radius: 999px;
     background: var(--sa-vf-orange);
@@ -759,14 +785,21 @@
         font-weight: 700;
         color: var(--sa-vf-navy);
     }
-    .sa-vf__drawer-close {
-        border: none;
-        background: none;
+    /* !important guards: Flatsome's global button styling (min-height 65px,
+       margin 26px at this font size) otherwise balloons the head to ~108px. */
+    .sa-vf .sa-vf__drawer-close {
+        border: none !important;
+        background: none !important;
+        box-shadow: none !important;
+        margin: 0 !important;
+        min-height: 0 !important;
+        min-width: 0 !important;
+        height: auto !important;
         font-size: 26px;
-        line-height: 1;
+        line-height: 1 !important;
         color: var(--sa-vf-navy);
         cursor: pointer;
-        padding: 0 6px;
+        padding: 0 6px !important;
     }
     .sa-vf__sidebar-scroll {
         flex: 1 1 auto;
