@@ -202,6 +202,7 @@
         applyAvailability(computeAvail(a));
         setApplyCount(total);
         updateActiveCount();
+        renderChips();
         if (scrollAfter) scrollToResults();
     }
 
@@ -304,6 +305,65 @@
         });
     }
 
+    /* -------------------------------------------------- active filter chips */
+
+    var chipsBox = root.querySelector('.sa-vf__chips');
+
+    /** One removable chip per active filter, rendered above the results grid. */
+    function renderChips() {
+        if (!chipsBox) return;
+        chipsBox.innerHTML = '';
+        var chips = [];
+
+        form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
+            if (!s.value) return;
+            var opt = s.options[s.selectedIndex];
+            // Strip the indent prefix on nested Region options ("  — ").
+            var label = (opt ? opt.textContent : s.value).replace(/^[\s —-]+/, '').trim();
+            chips.push({
+                label: label,
+                clear: function () {
+                    s.value = '';
+                    s.dispatchEvent(new Event('change')); // reruns + syncs any combo
+                }
+            });
+        });
+        if (availToggle && !availToggle.checked) {
+            chips.push({
+                label: 'Including sold',
+                clear: function () { availToggle.checked = true; rerun(); }
+            });
+        }
+
+        chips.forEach(function (c) {
+            var b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'sa-vf-chip';
+            b.setAttribute('aria-label', 'Remove filter: ' + c.label);
+            var txt = document.createElement('span');
+            txt.textContent = c.label;
+            var x = document.createElement('span');
+            x.className = 'sa-vf-chip__x';
+            x.setAttribute('aria-hidden', 'true');
+            x.textContent = '×';
+            b.appendChild(txt);
+            b.appendChild(x);
+            b.addEventListener('click', c.clear);
+            chipsBox.appendChild(b);
+        });
+
+        if (chips.length > 1) {
+            var all = document.createElement('button');
+            all.type = 'button';
+            all.className = 'sa-vf-chip sa-vf-chip--all';
+            all.textContent = 'Clear all';
+            all.addEventListener('click', clearAll);
+            chipsBox.appendChild(all);
+        }
+
+        chipsBox.hidden = chips.length === 0;
+    }
+
     /* --------------------------------------------- active filter count badge */
 
     var toggleCount = root.querySelector('.sa-vf-toggle__count');
@@ -326,6 +386,135 @@
         if (!applyBtn || typeof total === 'undefined') return;
         applyBtn.textContent = (Number(total) === 1) ? 'Show 1 vehicle' : 'Show ' + total + ' vehicles';
     }
+
+    /* ------------------------------------------------ searchable dropdowns */
+
+    /**
+     * Progressive enhancement for long dropdowns (data-search="1", e.g. Model):
+     * the native <select> stays in the DOM as the source of truth (collect(),
+     * availability and chips all keep reading it) but is visually replaced by a
+     * button that opens a panel with a type-to-filter search box. Options the
+     * availability pass hid/disabled are rebuilt fresh on every open.
+     */
+    function enhanceSearchable(sel) {
+        var placeholder = sel.options.length ? sel.options[0].textContent : '';
+
+        var wrap = document.createElement('div');
+        wrap.className = 'sa-vf-combo';
+        sel.parentNode.insertBefore(wrap, sel);
+        wrap.appendChild(sel);
+        sel.classList.add('sa-vf-combo__native');
+        sel.tabIndex = -1;
+
+        var display = document.createElement('button');
+        display.type = 'button';
+        display.className = 'sa-vf-select sa-vf-combo__display';
+        display.setAttribute('aria-haspopup', 'listbox');
+        display.setAttribute('aria-expanded', 'false');
+
+        var panel = document.createElement('div');
+        panel.className = 'sa-vf-combo__panel';
+        panel.hidden = true;
+
+        var search = document.createElement('input');
+        search.type = 'text';
+        search.className = 'sa-vf-combo__search';
+        search.placeholder = 'Search…';
+        search.setAttribute('aria-label', 'Search ' + placeholder);
+
+        var list = document.createElement('div');
+        list.className = 'sa-vf-combo__list';
+        list.setAttribute('role', 'listbox');
+
+        panel.appendChild(search);
+        panel.appendChild(list);
+        wrap.appendChild(display);
+        wrap.appendChild(panel);
+
+        function syncDisplay() {
+            var opt = sel.options[sel.selectedIndex];
+            var chosen = sel.value && opt;
+            display.textContent = chosen ? opt.textContent.trim() : placeholder;
+            display.classList.toggle('has-value', !!chosen);
+        }
+
+        function pick(value) {
+            sel.value = value;
+            close();
+            sel.dispatchEvent(new Event('change')); // triggers rerun + syncDisplay
+        }
+
+        function buildList() {
+            list.innerHTML = '';
+            Array.prototype.forEach.call(sel.options, function (opt) {
+                if (opt.value === '') return;
+                // Skip options the availability pass ruled out (unless selected).
+                if ((opt.hidden || opt.disabled) && opt.value !== sel.value) return;
+                var item = document.createElement('button');
+                item.type = 'button';
+                item.className = 'sa-vf-combo__item' + (opt.value === sel.value ? ' is-selected' : '');
+                item.setAttribute('role', 'option');
+                item.textContent = opt.textContent.trim();
+                item.dataset.value = opt.value;
+                item.addEventListener('click', function () { pick(opt.value); });
+                list.appendChild(item);
+            });
+            filterList();
+        }
+
+        function filterList() {
+            var q = search.value.trim().toLowerCase();
+            var any = false;
+            Array.prototype.forEach.call(list.children, function (item) {
+                if (item.classList.contains('sa-vf-combo__empty')) { item.remove(); return; }
+                var hit = !q || item.textContent.toLowerCase().indexOf(q) !== -1;
+                item.hidden = !hit;
+                if (hit) any = true;
+            });
+            if (!any) {
+                var empty = document.createElement('div');
+                empty.className = 'sa-vf-combo__empty';
+                empty.textContent = 'No matches';
+                list.appendChild(empty);
+            }
+        }
+
+        function open() {
+            buildList();
+            search.value = '';
+            filterList();
+            panel.hidden = false;
+            display.setAttribute('aria-expanded', 'true');
+            search.focus();
+        }
+        function close() {
+            if (panel.hidden) return;
+            panel.hidden = true;
+            display.setAttribute('aria-expanded', 'false');
+        }
+
+        display.addEventListener('click', function () {
+            panel.hidden ? open() : close();
+        });
+        search.addEventListener('input', filterList);
+        search.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') { close(); display.focus(); }
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                var first = list.querySelector('.sa-vf-combo__item:not([hidden])');
+                if (first) pick(first.dataset.value);
+            }
+        });
+        document.addEventListener('click', function (e) {
+            if (!wrap.contains(e.target)) close();
+        });
+
+        sel.addEventListener('change', syncDisplay);
+        sel.addEventListener('sa-vf-sync', syncDisplay); // programmatic resets (Clear)
+        syncDisplay();
+    }
+
+    form.querySelectorAll('.sa-vf-select[data-search]').forEach(enhanceSearchable);
 
     /* --------------------------------------------------------------- events */
 
@@ -353,6 +542,7 @@
         form.querySelectorAll('.sa-vf-select').forEach(function (s) {
             if (s.hasAttribute('data-region-nav')) return; // keep current location
             s.value = '';
+            s.dispatchEvent(new Event('sa-vf-sync')); // keep combo displays in step
         });
         // "Available Only" is the default state.
         if (availToggle) availToggle.checked = true;
@@ -370,17 +560,28 @@
     var sidebar  = root.querySelector('.sa-vf__sidebar');
     var closeBtn = root.querySelector('.sa-vf__drawer-close');
 
+    // Body scroll lock: overflow:hidden alone doesn't stop iOS Safari from
+    // scrolling the page behind the drawer, so pin the body with position:fixed
+    // at the current scroll offset and restore it on close.
+    var lockScrollY = 0;
+
     function openDrawer() {
         if (!sidebar) return;
         sidebar.classList.add('is-open');
         if (toggle) toggle.setAttribute('aria-expanded', 'true');
+        lockScrollY = window.pageYOffset;
         document.body.classList.add('sa-vf-open');
+        document.body.style.top = -lockScrollY + 'px';
     }
     function closeDrawer() {
         if (!sidebar) return;
         sidebar.classList.remove('is-open');
         if (toggle) toggle.setAttribute('aria-expanded', 'false');
-        document.body.classList.remove('sa-vf-open');
+        if (document.body.classList.contains('sa-vf-open')) {
+            document.body.classList.remove('sa-vf-open');
+            document.body.style.top = '';
+            window.scrollTo(0, lockScrollY);
+        }
     }
 
     if (toggle) toggle.addEventListener('click', function () {

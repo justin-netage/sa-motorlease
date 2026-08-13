@@ -287,14 +287,6 @@
     position: sticky;
     top: var(--sa-vf-sticky-top);
 }
-.sa-vf__heading {
-    font-size: 14px;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    margin: 0 0 10px;
-    color: var(--sa-vf-navy);
-    font-weight: 700;
-}
 .sa-vf-field { margin-bottom: 7px; }
 
 /* Extra specificity + !important so the theme's own <select> styling (native
@@ -345,13 +337,13 @@
 .sa-vf-btn {
     display: inline-block;
     width: 100%;
-    padding: 10px 16px;
+    padding: 7px 14px;
     border: none;
     border-radius: var(--sa-vf-radius);
     background: var(--sa-vf-orange);
     color: #fff;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 13px;
     letter-spacing: .03em;
     text-transform: uppercase;
     cursor: pointer;
@@ -360,6 +352,73 @@
 .sa-vf-btn:hover { background: var(--sa-vf-orange-dark); }
 .sa-vf-btn--clear { background: var(--sa-vf-navy); }
 .sa-vf-btn--clear:hover { background: #002a49; }
+
+/* ------------------------------------------- searchable dropdown (combo) */
+.sa-vf-combo { position: relative; }
+/* The native select stays as the form's source of truth but is hidden from
+   view (not display:none — some browsers skip firing events on those). */
+.sa-vf-combo__native {
+    position: absolute !important;
+    width: 1px; height: 1px;
+    opacity: 0;
+    pointer-events: none;
+    margin: -1px;
+    overflow: hidden;
+}
+.sa-vf .sa-vf-combo__display {
+    display: block;
+    text-align: left;
+    color: var(--sa-vf-muted);
+}
+.sa-vf .sa-vf-combo__display.has-value { color: var(--sa-vf-navy); }
+.sa-vf-combo__panel {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    z-index: 30;
+    background: #fff;
+    border: 1px solid var(--sa-vf-border);
+    border-radius: var(--sa-vf-radius);
+    box-shadow: 0 10px 28px rgba(0,0,0,.14);
+    overflow: hidden;
+}
+.sa-vf .sa-vf-combo__search {
+    display: block;
+    width: calc(100% - 16px);
+    margin: 8px;
+    padding: 7px 10px;
+    border: 1px solid var(--sa-vf-border);
+    border-radius: var(--sa-vf-radius);
+    font-size: 14px;
+    color: var(--sa-vf-navy);
+    background: #fff;
+}
+.sa-vf .sa-vf-combo__search:focus { outline: none; border-color: var(--sa-vf-orange); }
+.sa-vf-combo__list {
+    max-height: 240px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    padding-bottom: 4px;
+}
+.sa-vf-combo__item {
+    display: block;
+    width: 100%;
+    padding: 8px 12px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 14px;
+    color: var(--sa-vf-navy);
+    cursor: pointer;
+}
+.sa-vf-combo__item:hover { background: #fff3ea; }
+.sa-vf-combo__item.is-selected { color: var(--sa-vf-orange); font-weight: 700; }
+.sa-vf-combo__empty {
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--sa-vf-muted);
+}
 
 /* --------------------------------------------------------------- results */
 .sa-vf__topbar {
@@ -374,6 +433,43 @@
 .sa-vf__sortwrap { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .sa-vf__sortwrap span { color: var(--sa-vf-muted); white-space: nowrap; }
 .sa-vf__sort { width: auto; min-width: 190px; }
+
+/* --------------------------------------------------- active filter chips */
+.sa-vf__chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: -4px 0 14px;
+}
+.sa-vf-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border: 1px solid var(--sa-vf-border);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--sa-vf-navy);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.4;
+    cursor: pointer;
+    transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.sa-vf-chip:hover { border-color: var(--sa-vf-orange); color: var(--sa-vf-orange); }
+.sa-vf-chip__x {
+    font-size: 16px;
+    line-height: 1;
+    color: var(--sa-vf-muted);
+}
+.sa-vf-chip:hover .sa-vf-chip__x { color: var(--sa-vf-orange); }
+.sa-vf-chip--all {
+    border-color: transparent;
+    background: none;
+    color: var(--sa-vf-muted);
+    text-decoration: underline;
+}
+.sa-vf-chip--all:hover { background: none; color: var(--sa-vf-orange); }
 
 /* results is the positioning context for the loading overlay */
 .sa-vf__results { position: relative; }
@@ -567,31 +663,31 @@
     display: none;
     position: fixed;
     left: 50%;
-    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     transform: translateX(-50%);
     z-index: 9999;
     align-items: center;
     justify-content: center;
-    gap: 9px;
-    min-width: 190px;
-    padding: 13px 30px;
+    gap: 8px;
+    min-width: 150px;
+    padding: 8px 22px;
     border: none;
     border-radius: 999px;
     background: var(--sa-vf-orange);
     color: #fff;
     font-weight: 700;
-    font-size: 14px;
+    font-size: 13px;
     letter-spacing: .03em;
     text-transform: uppercase;
     cursor: pointer;
-    box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 5px rgba(244,123,36,.18);
+    box-shadow: 0 6px 20px rgba(0,0,0,.35), 0 0 0 4px rgba(244,123,36,.18);
     animation: sa-vf-toggle-pulse 2.4s ease-in-out infinite;
     transition: opacity .2s ease, transform .2s ease, visibility .2s ease;
 }
 .sa-vf-toggle:hover { background: var(--sa-vf-orange-dark); }
 @keyframes sa-vf-toggle-pulse {
-    0%, 100% { box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 5px rgba(244,123,36,.18); }
-    50%      { box-shadow: 0 8px 26px rgba(0,0,0,.35), 0 0 0 9px rgba(244,123,36,.05); }
+    0%, 100% { box-shadow: 0 6px 20px rgba(0,0,0,.35), 0 0 0 4px rgba(244,123,36,.18); }
+    50%      { box-shadow: 0 6px 20px rgba(0,0,0,.35), 0 0 0 8px rgba(244,123,36,.05); }
 }
 /* Hidden until the user scrolls past the featured-vehicles carousel (see vehicle-filter.js). */
 .sa-vf-toggle--hidden {
@@ -602,15 +698,15 @@
     animation: none;
 }
 .sa-vf-toggle__count {
-    min-width: 22px;
-    height: 22px;
-    padding: 0 6px;
+    min-width: 19px;
+    height: 19px;
+    padding: 0 5px;
     border-radius: 999px;
     background: #fff;
     color: var(--sa-vf-orange);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 800;
-    line-height: 22px;
+    line-height: 19px;
     text-align: center;
 }
 
@@ -631,11 +727,13 @@
     /* The floating button would sit on top of the open drawer — hide it then. */
     body.sa-vf-open .sa-vf-toggle { display: none; }
 
-    /* Filter sidebar becomes a full-screen slide-in drawer. */
+    /* Filter sidebar becomes a full-screen slide-in drawer. The site's WhatsApp
+       floating button sits at z-index 99999999, so the drawer must top that to
+       cover it while filtering. */
     .sa-vf__sidebar {
         position: fixed;
         inset: 0;
-        z-index: 100000;
+        z-index: 100000001;
         margin: 0;
         padding: 0;
         border: none;
@@ -649,21 +747,22 @@
     }
     .sa-vf__sidebar.is-open { transform: translateX(0); visibility: visible; }
 
+    /* Compact drawer header — one slim row, no wasted space above the fields. */
     .sa-vf__drawer-head {
         display: flex;
         align-items: center;
         justify-content: space-between;
         flex: 0 0 auto;
-        padding: 14px 16px;
+        padding: 8px 16px;
         border-bottom: 1px solid var(--sa-vf-border);
-        font-size: 17px;
+        font-size: 15px;
         font-weight: 700;
         color: var(--sa-vf-navy);
     }
     .sa-vf__drawer-close {
         border: none;
         background: none;
-        font-size: 30px;
+        font-size: 26px;
         line-height: 1;
         color: var(--sa-vf-navy);
         cursor: pointer;
@@ -673,9 +772,9 @@
         flex: 1 1 auto;
         overflow-y: auto;
         -webkit-overflow-scrolling: touch;
-        padding: 14px 16px;
+        overscroll-behavior: contain; /* don't chain scroll to the page behind */
+        padding: 10px 16px 14px;
     }
-    .sa-vf__heading { display: none; }   /* drawer head already says "Filters" */
     .sa-vf-actions { display: none; }    /* footer provides Clear + Show results */
 
     .sa-vf__drawer-foot {
@@ -683,20 +782,27 @@
         grid-template-columns: 1fr 1.5fr;
         gap: 10px;
         flex: 0 0 auto;
-        padding: 12px 16px;
+        padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
         border-top: 1px solid var(--sa-vf-border);
         background: #fff;
         box-shadow: 0 -3px 12px rgba(0,0,0,.06);
     }
-    .sa-vf__drawer-foot .sa-vf-btn { margin: 0; }
+    .sa-vf__drawer-foot .sa-vf-btn { margin: 0; padding-top: 10px; padding-bottom: 10px; }
 
     /* Bigger touch targets inside the drawer. */
-    .sa-vf-field { margin-bottom: 12px; }
-    .sa-vf .sa-vf-select { min-height: 48px; font-size: 15px; }
+    .sa-vf-field { margin-bottom: 10px; }
+    .sa-vf .sa-vf-select { min-height: 44px; font-size: 15px; }
     .sa-vf-check { font-size: 15px; padding: 4px 0; }
     .sa-vf-check__hint { font-size: 12px; }
 }
-body.sa-vf-open { overflow: hidden; }
+/* Pin the body while the drawer is open — overflow:hidden alone doesn't stop
+   iOS Safari scrolling the page behind; JS stores/restores the scroll offset. */
+body.sa-vf-open {
+    position: fixed;
+    left: 0; right: 0;
+    width: 100%;
+    overflow: hidden;
+}
 
 @media (max-width: 520px) {
     .sa-vf__grid { grid-template-columns: 1fr; }

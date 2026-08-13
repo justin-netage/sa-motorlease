@@ -24,7 +24,6 @@ $sel    = $initial['facets'];
                 <button type="button" class="sa-vf__drawer-close" aria-label="Close filters">&times;</button>
             </div>
             <div class="sa-vf__sidebar-scroll">
-            <h2 class="sa-vf__heading">Filter Options</h2>
             <form class="sa-vf-form" onsubmit="return false;">
 
                 <?php foreach ( $facets as $facet ) :
@@ -72,7 +71,7 @@ $sel    = $initial['facets'];
                     $current = $sel[ $k ] ?? '';
                     ?>
                     <div class="sa-vf-field">
-                        <select class="sa-vf-select" name="<?php echo esc_attr( $k ); ?>" data-facet="<?php echo esc_attr( $k ); ?>">
+                        <select class="sa-vf-select" name="<?php echo esc_attr( $k ); ?>" data-facet="<?php echo esc_attr( $k ); ?>"<?php echo ( $k === 'model' ) ? ' data-search="1"' : ''; // long lists get a search box ?>>
                             <option value=""><?php echo esc_html( $facet['label'] ); ?></option>
                             <?php foreach ( $terms as $t ) : ?>
                                 <option value="<?php echo esc_attr( $t['slug'] ); ?>" <?php selected( $current, $t['slug'] ); ?>>
@@ -142,6 +141,8 @@ $sel    = $initial['facets'];
                     </select>
                 </label>
             </div>
+
+            <div class="sa-vf__chips" aria-label="Active filters" hidden></div>
 
             <div class="sa-vf__grid" aria-live="polite"><?php echo $result['html']; // phpcs:ignore WordPress.Security.EscapeOutput ?></div>
 
