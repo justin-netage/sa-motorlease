@@ -451,11 +451,16 @@
 .sa-vf__sort { width: auto; min-width: 190px; }
 
 /* --------------------------------------------------- active filter chips */
+/* Lives at the bottom of the sidebar: on desktop that's inside the sticky
+   filter card (below the buttons, always in view); in the mobile drawer it
+   sits below the last field. */
 .sa-vf__chips {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    margin: -4px 0 14px;
+    margin: 12px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid var(--sa-vf-border);
 }
 .sa-vf-chip {
     display: inline-flex;
