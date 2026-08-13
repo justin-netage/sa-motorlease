@@ -382,9 +382,13 @@
         }
     }
 
+    /* Both the drawer's apply button and the desktop Filter button show the
+       live result count ("Show N vehicles"). */
     function setApplyCount(total) {
-        if (!applyBtn || typeof total === 'undefined') return;
-        applyBtn.textContent = (Number(total) === 1) ? 'Show 1 vehicle' : 'Show ' + total + ' vehicles';
+        if (typeof total === 'undefined') return;
+        var label = (Number(total) === 1) ? 'Show 1 vehicle' : 'Show ' + total + ' vehicles';
+        if (applyBtn) applyBtn.textContent = label;
+        if (filterBtn) filterBtn.textContent = label;
     }
 
     /* ------------------------------------------------ searchable dropdowns */
