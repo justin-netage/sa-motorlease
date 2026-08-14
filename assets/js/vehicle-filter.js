@@ -521,6 +521,41 @@
 
     form.querySelectorAll('.sa-vf-select[data-search]').forEach(enhanceSearchable);
 
+    /* -------------------------------------------------- per-field clear (×) */
+
+    /**
+     * A small × inside each facet field, next to the chevron, shown while that
+     * field has a selection — so a filter can always be removed right where it
+     * was set (the dynamic availability hiding can otherwise feel like a trap).
+     */
+    function addClearX(sel) {
+        var host = sel.closest('.sa-vf-combo') || sel.closest('.sa-vf-field');
+        if (!host || host.querySelector('.sa-vf-x')) return;
+
+        var x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'sa-vf-x';
+        x.setAttribute('aria-label', 'Clear this filter');
+        x.textContent = '×';
+        x.hidden = true;
+        x.addEventListener('click', function (e) {
+            e.stopPropagation(); // don't toggle the combo panel underneath
+            sel.value = '';
+            sel.dispatchEvent(new Event('change')); // rerun + syncs combo/chips
+        });
+        host.appendChild(x);
+
+        function sync() {
+            x.hidden = !sel.value;
+            host.classList.toggle('sa-vf-has-x', !!sel.value);
+        }
+        sel.addEventListener('change', sync);
+        sel.addEventListener('sa-vf-sync', sync);
+        sync();
+    }
+
+    form.querySelectorAll('.sa-vf-select[data-facet]').forEach(addClearX);
+
     /* --------------------------------------------------------------- events */
 
     var availToggle = form.querySelector('[name="available_only"]');

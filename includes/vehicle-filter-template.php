@@ -24,6 +24,7 @@ $sel    = $initial['facets'];
                 <button type="button" class="sa-vf__drawer-close" aria-label="Close filters">&times;</button>
             </div>
             <div class="sa-vf__sidebar-scroll">
+            <div class="sa-vf__chips" aria-label="Active filters" hidden></div>
             <form class="sa-vf-form" onsubmit="return false;">
 
                 <?php foreach ( $facets as $facet ) :
@@ -128,7 +129,6 @@ $sel    = $initial['facets'];
                     <button type="button" class="sa-vf-btn sa-vf-btn--clear">Clear</button>
                 </div>
             </form>
-            <div class="sa-vf__chips" aria-label="Active filters" hidden></div>
             </div><?php // .sa-vf__sidebar-scroll ?>
             <div class="sa-vf__drawer-foot">
                 <button type="button" class="sa-vf-btn sa-vf-btn--clear sa-vf__drawer-clear">Clear</button>
