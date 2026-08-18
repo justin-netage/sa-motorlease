@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.25
+ * Version: 2.6.26
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.25' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.26' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -4632,13 +4632,13 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
     };
 
     // Raw inputs
-    $location_raw       = $request->get_param('location');        // exact <option value> (e.g., "Other")
+    $location_raw       = $request->get_param('location');        // exact <option value> (e.g., "Other*")
     $other_location_raw = $request->get_param('other_location');  // text when Other selected
     $e_hailing_raw      = $request->get_param('e_hailing');       // radio yes/no -> boolean
 
     // Normalize/sanitize
     $location     = sanitize_text_field( (string) $location_raw );
-    $is_other     = is_string($location_raw) && strcasecmp(trim($location_raw), 'Other') === 0;
+    $is_other     = sa_motorlease_is_other_location( $location_raw );
     $other_loc    = $is_other ? sanitize_text_field( (string) $other_location_raw ) : '';
     $e_hailing    = $to_bool( $e_hailing_raw );
 
@@ -4649,8 +4649,8 @@ function samotorlease_qualify_lead( WP_REST_Request $request ) {
         'id_number'        => sanitize_text_field( $request->get_param('id_number') ),
         'cellphone_number' => sanitize_text_field( $request->get_param('cellphone_number') ),
         'your_email'       => sanitize_email( $request->get_param('your_email') ),
-        'location'         => $location,     // exact select value (e.g. "Other")
-        'other_location'   => $other_loc,    // only filled when location === "Other"
+        'location'         => $location,     // exact select value (e.g. "Other*")
+        'other_location'   => $other_loc,    // only filled when the "Other" option was picked
         'e_hailing'        => $e_hailing,    // boolean
         'take_home'        => preg_replace('/[^\d.]/', '', (string) $request->get_param('take_home') ),
         'valid_license'    => $to_bool( $request->get_param('valid_license') ),
@@ -6364,6 +6364,22 @@ function sa_motorlease_record_failed_lead( array $data, $reason, $status_code, $
 }
 
 /**
+ * Was the location select's "Other" choice picked?
+ *
+ * The option is labelled with a trailing marker ("Other*") pointing at the
+ * note under the field, so an exact "Other" comparison misses it and
+ * other_location silently never reaches PACE. Match on the word only, which
+ * also survives the marker being changed or dropped. Mirrors
+ * isOtherLocationValue() in lead-qualification.js so client and server agree.
+ */
+function sa_motorlease_is_other_location( $value ) {
+    if ( ! is_string( $value ) ) {
+        return false;
+    }
+    return preg_replace( '/[^a-z]+$/', '', strtolower( trim( $value ) ) ) === 'other';
+}
+
+/**
  * Validate the qualify-lead payload before it leaves us for the PACE API.
  * Returns null if valid, or a human-readable error message describing the
  * first problem. Messages are intentionally short — the JS surfaces them
@@ -6413,7 +6429,7 @@ function sa_motorlease_validate_qualify_payload( array $data ) {
     }
 
     // "Other" location selected → other_location text must be filled in.
-    if ( strcasecmp( trim( (string) $data['location'] ), 'Other' ) === 0
+    if ( sa_motorlease_is_other_location( $data['location'] )
          && trim( (string) ( $data['other_location'] ?? '' ) ) === '' ) {
         return 'Please tell us where you are based.';
     }

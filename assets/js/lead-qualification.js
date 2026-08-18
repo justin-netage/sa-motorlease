@@ -66,6 +66,14 @@ jQuery(function($){
   // Affairs / passport databases on its end, so this is format-only.
   const idRx = /^[A-Za-z0-9]{9,13}$/;
 
+  // The location select's "Other" choice is labelled with a trailing marker
+  // ("Other*") pointing at the note under the field. Match on the word only,
+  // so the marker — on the option value, the label, or both — can't stop
+  // other_location from being collected and sent on to PACE.
+  function isOtherLocationValue(s) {
+    return String(s || '').trim().toLowerCase().replace(/[^a-z]+$/, '') === 'other';
+  }
+
   // --- Prefill helpers for booleans -> selects ---
   function setYesNoSelectFromBool($select, boolVal){
     let chosen = null;
@@ -403,9 +411,8 @@ jQuery(function($){
       };
       const isOtherSelected = (selectSel) => {
         const $sel = $(selectSel);
-        const v = ($sel.val() || '').trim().toLowerCase();
-        const t = ($sel.find('option:selected').text() || '').trim().toLowerCase();
-        return v === 'other' || t === 'other';
+        return isOtherLocationValue($sel.val()) ||
+               isOtherLocationValue($sel.find('option:selected').text());
       };
       const readLocationRaw = (selectSel) => {
         const $sel   = $(selectSel);
