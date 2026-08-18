@@ -7,7 +7,7 @@
  * On a site whose WordPress bootstrap is slow, this is the difference between a
  * multi-second admin-ajax request per change and an instant one. The first page
  * is still server-rendered for SEO / no-JS; this takes over on load.
- * Facets, monthly-payment + mileage buckets, sorting, numbered pagination,
+ * Facets, max-price + mileage buckets, sorting, numbered pagination,
  * shareable URL state, a floating mobile button. No jQuery / no external deps.
  */
 (function () {
@@ -110,13 +110,17 @@
         });
     }
 
+    // Which buckets have at least one row in them. No early exit on a match:
+    // the max-price ceilings are nested (every row under R6,000 is also under
+    // R8,000), so a row counts towards each bucket it falls in. The km buckets
+    // are disjoint, so at most one matches there anyway.
     function bucketsPresent(rows, buckets, field) {
         var set = {};
         rows.forEach(function (v) {
             var val = v[field];
             if (val == null) return;
             for (var i = 0; i < buckets.length; i++) {
-                if (inBucket(val, buckets[i])) { set[buckets[i].key] = 1; break; }
+                if (inBucket(val, buckets[i])) set[buckets[i].key] = 1;
             }
         });
         return Object.keys(set);

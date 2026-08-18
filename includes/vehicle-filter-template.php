@@ -95,10 +95,10 @@ $sel    = $initial['facets'];
                     </select>
                 </div>
 
-                <?php // Monthly payment buckets ?>
+                <?php // Max price ceilings ?>
                 <div class="sa-vf-field">
                     <select class="sa-vf-select" name="price" data-facet="price">
-                        <option value="">Monthly Payment</option>
+                        <option value="">Max Price</option>
                         <?php foreach ( sa_vf_price_buckets() as $b ) : ?>
                             <option value="<?php echo esc_attr( $b['key'] ); ?>" <?php selected( $initial['price'], $b['key'] ); ?>>
                                 <?php echo esc_html( $b['label'] ); ?>
