@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.9.6' );
+    define( 'SA_VF_VERSION', '1.9.7' );
 }
 
 /**
@@ -79,20 +79,117 @@ function sa_vf_region_options() {
     return $out;
 }
 
+/** Where the R500 steps give way to R2,000 steps, and the two step sizes. */
+const SA_VF_PRICE_STEP_BREAK = 8000;
+const SA_VF_PRICE_STEP_LOW   = 500;
+const SA_VF_PRICE_STEP_HIGH  = 2000;
+
 /**
- * Monthly payment buckets. Bounds are continuous — `min` inclusive, `max`
- * exclusive — so every price falls in exactly one bucket. The labels use the
- * marketing boundaries (…,999 / …,001) but the query cutoffs are the round
- * numbers below.
+ * Max-price options, derived from the catalogue rather than fixed.
+ *
+ * Each option is a ceiling, not a band: "Up to R10,000" returns every vehicle
+ * priced R10,000 or less. The ladder starts at the first round figure that
+ * covers the cheapest vehicle on the site and climbs in R500 steps to R8,000,
+ * then in R2,000 steps until it covers the dearest — fine steps low down where
+ * affordability is tight, coarser at the top where it isn't.
+ *
+ * The buckets are therefore nested rather than disjoint, which is why the two
+ * availability passes (sa_vf_available() here, bucketsPresent() in the JS)
+ * count a row against every bucket it falls in instead of stopping at the
+ * first. Stopping early would mark only the lowest matching ceiling as
+ * available and hide every option above it.
+ *
+ * Bounds stay half-open — `min` inclusive, `max` exclusive — because that is
+ * the contract the rest of the filter (and the km buckets) work to. `max` sits
+ * a cent above the ceiling so a vehicle priced at exactly the ceiling is
+ * included, which is what "up to" means to a visitor.
+ *
+ * The top option is open-ended rather than stopping at its own label. The
+ * ladder is rebuilt whenever a vehicle changes, so a dearer import should
+ * widen it immediately; the open top means that even if a rebuild were missed,
+ * no vehicle can sit above every option and become unreachable.
+ *
+ * Site-wide by design: the location archives lock the view to a province or
+ * area, but every page offers the same ladder and the availability pass hides
+ * the ceilings with nothing under them in the current scope.
  */
 function sa_vf_price_buckets() {
+    static $cache = null;
+    if ( $cache !== null ) return $cache;
+
+    list( $low, $high ) = sa_vf_price_range();
+
+    // Nothing priced yet (empty catalogue, or a cold cache mid-import): fall
+    // back to the fixed ladder so the dropdown still renders something usable.
+    if ( $low === null ) {
+        return $cache = sa_vf_price_buckets_fallback();
+    }
+
+    $money = function ( $n ) { return 'R' . number_format( $n, 0, '.', ',' ); };
+
+    // Lowest ceiling worth offering: the first grid line at or above the
+    // cheapest vehicle, so the first option always has something under it.
+    // Above the break the lines are measured from the break itself, so they
+    // stay round (8000, 10000, 12000…).
+    if ( $low <= SA_VF_PRICE_STEP_BREAK ) {
+        $cap = (int) ceil( $low / SA_VF_PRICE_STEP_LOW ) * SA_VF_PRICE_STEP_LOW;
+    } else {
+        $cap = SA_VF_PRICE_STEP_BREAK
+             + (int) ceil( ( $low - SA_VF_PRICE_STEP_BREAK ) / SA_VF_PRICE_STEP_HIGH ) * SA_VF_PRICE_STEP_HIGH;
+    }
+
+    $buckets = [];
+    while ( true ) {
+        $last = ( $cap >= $high ); // this ceiling already covers the dearest vehicle
+
+        $buckets[] = [
+            'key'   => '0-' . $cap,
+            'label' => 'Up to ' . $money( $cap ),
+            'min'   => 0,
+            'max'   => $last ? PHP_INT_MAX : $cap + 0.01,
+        ];
+
+        if ( $last ) break;
+        $cap += ( $cap < SA_VF_PRICE_STEP_BREAK ) ? SA_VF_PRICE_STEP_LOW : SA_VF_PRICE_STEP_HIGH;
+    }
+
+    return $cache = $buckets;
+}
+
+/**
+ * Cheapest and dearest monthly price in the catalogue as [ low, high ], or
+ * [ null, null ] when nothing is priced.
+ *
+ * Sold vehicles count towards both ends: the ladder shouldn't rearrange itself
+ * when a visitor toggles "Available Only", and the availability pass already
+ * hides whichever ceilings have nothing under them in view.
+ */
+function sa_vf_price_range() {
+    static $range = null;
+    if ( $range !== null ) return $range;
+
+    $low = null;
+    $high = null;
+    foreach ( sa_vf_index() as $r ) {
+        if ( $r['price'] === null ) continue;
+        $p = (float) $r['price'];
+        if ( $p <= 0 ) continue; // placeholder/zero prices aren't a real floor
+        if ( $low === null  || $p < $low  ) $low  = $p;
+        if ( $high === null || $p > $high ) $high = $p;
+    }
+
+    return $range = [ $low, $high ];
+}
+
+/** The fixed ladder used before the catalogue is readable. */
+function sa_vf_price_buckets_fallback() {
     return [
-        [ 'key' => '0-6000',      'label' => 'Under R6,000',      'min' => 0,     'max' => 6000 ],
-        [ 'key' => '6000-8000',   'label' => 'R6,001 – R7,999',   'min' => 6000,  'max' => 8000 ],
-        [ 'key' => '8000-10000',  'label' => 'R8,000 – R9,999',   'min' => 8000,  'max' => 10000 ],
-        [ 'key' => '10000-13000', 'label' => 'R10,000 – R12,999', 'min' => 10000, 'max' => 13000 ],
-        [ 'key' => '13000-16000', 'label' => 'R13,000 – R15,999', 'min' => 13000, 'max' => 16000 ],
-        [ 'key' => '16000-',      'label' => 'R16,000+',          'min' => 16000, 'max' => PHP_INT_MAX ],
+        [ 'key' => '0-6000',  'label' => 'Up to R6,000',  'min' => 0, 'max' => 6000.01 ],
+        [ 'key' => '0-8000',  'label' => 'Up to R8,000',  'min' => 0, 'max' => 8000.01 ],
+        [ 'key' => '0-10000', 'label' => 'Up to R10,000', 'min' => 0, 'max' => 10000.01 ],
+        [ 'key' => '0-12000', 'label' => 'Up to R12,000', 'min' => 0, 'max' => 12000.01 ],
+        [ 'key' => '0-14000', 'label' => 'Up to R14,000', 'min' => 0, 'max' => 14000.01 ],
+        [ 'key' => '0-16000', 'label' => 'Up to R16,000', 'min' => 0, 'max' => PHP_INT_MAX ],
     ];
 }
 
@@ -472,7 +569,7 @@ function sa_vf_build_index() {
     return $index;
 }
 
-/** Look up a monthly-payment / km bucket definition by its key (or null). */
+/** Look up a max-price / km bucket definition by its key (or null). */
 function sa_vf_price_bucket_by_key( $key ) {
     if ( $key === '' ) return null;
     foreach ( sa_vf_price_buckets() as $b ) if ( $b['key'] === $key ) return $b;
@@ -664,13 +761,13 @@ function sa_vf_parse_args( array $src ) {
         // visitor explicitly opts to show them (show_sold=1).
         'hide_sold'=> ! in_array( $str( 'show_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
         'km'       => $str( 'km' ),
-        'price'    => '', // monthly-payment bucket key (see sa_vf_price_buckets)
+        'price'    => '', // max-price ceiling key (see sa_vf_price_buckets)
         'region'   => 0, // product_cat location term the visitor chose in the Region filter
         'category' => 0, // product_cat term the whole view is locked to (location archives)
         'facets'   => [],
     ];
 
-    // Monthly payment bucket — validated against the known set.
+    // Max price ceiling — validated against the known set.
     $price = $str( 'price' );
     if ( $price !== '' ) {
         foreach ( sa_vf_price_buckets() as $b ) {
@@ -813,8 +910,10 @@ function sa_vf_available( array $args ) {
     }
     $avail['km'] = array_keys( $km_set );
 
-    // Monthly payment buckets (exclude the price selection itself), so the
-    // dropdown greys out ranges with no matches given the other filters.
+    // Max-price ceilings (exclude the price selection itself), so the dropdown
+    // hides ceilings with nothing under them given the other filters. The
+    // ceilings are nested, so a row counts towards every one it falls under —
+    // stopping at the first would leave only the lowest ceiling available.
     if ( ( $args['price'] ?? '' ) !== '' ) {
         $a2 = $args;
         $a2['price'] = '';
@@ -823,10 +922,11 @@ function sa_vf_available( array $args ) {
         $rows = $full;
     }
     $price_set = [];
+    $price_buckets = sa_vf_price_buckets();
     foreach ( $rows as $r ) {
         if ( $r['price'] === null ) continue;
-        foreach ( sa_vf_price_buckets() as $b ) {
-            if ( $r['price'] >= $b['min'] && $r['price'] < $b['max'] ) { $price_set[ $b['key'] ] = 1; break; }
+        foreach ( $price_buckets as $b ) {
+            if ( $r['price'] >= $b['min'] && $r['price'] < $b['max'] ) $price_set[ $b['key'] ] = 1;
         }
     }
     $avail['price'] = array_keys( $price_set );

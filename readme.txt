@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.26
+Stable tag: 2.6.27
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
