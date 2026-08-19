@@ -462,6 +462,27 @@ function sa_vf_buckets_for_js( array $buckets ) {
     return $out;
 }
 
+/**
+ * Normalise a post-query result to a list of integer IDs.
+ *
+ * Every product query below asks for `fields => ids`, but that is a request,
+ * not a guarantee: a `pre_get_posts` callback in the theme or another plugin
+ * can reset it, and that hook fires even though get_posts() defaults
+ * suppress_filters to true. The result then arrives as WP_Post objects, and
+ * PHP 8 fatals the moment one is used as an array key ("Cannot access offset
+ * of type WP_Post on array") — a 500 on the listings archives rather than
+ * anything the caller can anticipate. Casting at each query boundary keeps the
+ * rest of the file working in plain ints whatever the query hands back.
+ */
+function sa_vf_post_ids( $posts ) {
+    if ( ! is_array( $posts ) ) return [];
+    $ids = [];
+    foreach ( $posts as $p ) {
+        $ids[] = $p instanceof WP_Post ? (int) $p->ID : (int) $p;
+    }
+    return $ids;
+}
+
 /** The index keyed by product id, for O(1) lookups during sort/render. */
 function sa_vf_index_by_id() {
     static $map = null;
@@ -477,7 +498,7 @@ function sa_vf_index_by_id() {
  * or right after an import, never on a normal filter request.
  */
 function sa_vf_build_index() {
-    $ids = get_posts( [
+    $ids = sa_vf_post_ids( get_posts( [
         'post_type'           => 'product',
         'post_status'         => 'publish',
         'posts_per_page'      => -1,
@@ -486,7 +507,7 @@ function sa_vf_build_index() {
         'ignore_sticky_posts' => true,
         'orderby'             => 'date',
         'order'               => 'DESC',
-    ] );
+    ] ) );
     if ( ! $ids ) return [];
 
     // Every taxonomy we need, fetched for all products in a single query.
@@ -1274,6 +1295,10 @@ function sa_vf_not_sold_clause() {
 function sa_vf_dedupe_key( $id, $mode ) {
     if ( $mode !== 'make' && $mode !== 'make_model' ) return '';
 
+    // Belt-and-braces: the callers normalise their query results, but an
+    // object reaching the array lookup below is a fatal, not a warning.
+    $id = $id instanceof WP_Post ? (int) $id->ID : (int) $id;
+
     $row = sa_vf_index_by_id()[ $id ] ?? null;
     if ( $row ) {
         $mk = $row['facets']['make'][0]  ?? '';
@@ -1320,7 +1345,7 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
     $featured[] = [ 'taxonomy' => 'product_visibility', 'field' => 'name', 'terms' => 'featured' ];
     if ( count( $featured ) > 1 ) $featured = array_merge( [ 'relation' => 'AND' ], $featured );
 
-    $featured_ids = get_posts( [
+    $featured_ids = sa_vf_post_ids( get_posts( [
         'post_type'      => 'product',
         'post_status'    => 'publish',
         'posts_per_page' => $pool,
@@ -1329,7 +1354,7 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
         'orderby'        => 'date',
         'order'          => 'DESC',
         'tax_query'      => $featured,
-    ] );
+    ] ) );
 
     // Pick distinct make+model up to the limit, first from the featured pool,
     // then topped up with the newest vehicles in the same scope.
@@ -1361,7 +1386,7 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
             'post__not_in'   => $out ?: [ 0 ],
         ];
         if ( $base ) $fill_args['tax_query'] = ( count( $base ) > 1 ) ? array_merge( [ 'relation' => 'AND' ], $base ) : $base;
-        $take( get_posts( $fill_args ) );
+        $take( sa_vf_post_ids( get_posts( $fill_args ) ) );
     }
 
     return $out;
@@ -1511,7 +1536,7 @@ function sa_vf_qualified_ids( $limit, $per = 15 ) {
 
     $out = [];
     $seen = [];
-    foreach ( $q->posts as $id ) {
+    foreach ( sa_vf_post_ids( $q->posts ) as $id ) {
         $terms = get_the_terms( $id, 'pa_model' );
         $model = ( $terms && ! is_wp_error( $terms ) ) ? reset( $terms )->slug : '';
         if ( $model !== '' ) {
