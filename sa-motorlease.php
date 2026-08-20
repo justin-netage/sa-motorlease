@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.28
+ * Version: 2.6.29
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.28' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.29' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -1504,6 +1504,39 @@ function vi_fetch_feed($cache_ttl = 0) {
     return $result;
 }
 
+/**
+ * Rebuild the vehicle filter index and purge the page cache in front of it,
+ * but only when this pass actually changed the catalogue.
+ *
+ * $ver_before is the filter index version sampled before the run. Every product
+ * write bumps that version, so a version that has not moved means nothing was
+ * created, updated, pruned or re-imaged — and purging the host page cache on a
+ * quiet feed would throw away a warm cache hourly for nothing.
+ *
+ * Called at the end of both passes rather than deferred to a scheduled event.
+ * The old flow set an option here and left the work to a wbw_custom_index_cron
+ * event scheduled only by the update pass, which meant a create-only hour never
+ * flushed at all, and a truncated update run never got as far as scheduling it.
+ *
+ * @param int|null $ver_before Index version before the pass, or null if the
+ *                             filter module is not loaded.
+ * @param string   $label      Pass name, for the log.
+ */
+function vi_refresh_vehicle_filter($ver_before, $label) {
+    if ($ver_before === null || !function_exists('sa_vf_flush_caches')) {
+        return false;
+    }
+    if (sa_vf_index_version() === $ver_before) {
+        log_import_update("[SA VF] {$label}: catalogue unchanged (version {$ver_before}) — no flush needed.");
+        delete_option('vi_wbw_reindex_needed'); // resolved: nothing to refresh
+        return false;
+    }
+    log_import_update("[SA VF] {$label}: catalogue changed — rebuilding index and purging page cache.");
+    sa_vf_flush_caches();
+    delete_option('vi_wbw_reindex_needed'); // resolved: refresh done in-request
+    return true;
+}
+
 // === Create: import new vehicles from feed ==================================
 
 /**
@@ -1549,6 +1582,16 @@ function vi_create_new_products($budget_sec = null, $item_cap = null, $feed_cach
     if ($create_limit > 0) sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Per-run create limit: VI_MAX_VEHICLES_PER_RUN={$create_limit}");
 
     $created = 0;
+
+    // Watermark the filter index so we can tell at the end whether this run
+    // actually touched the catalogue. Every product write bumps this version,
+    // so it catches creates, prunes and image attachments alike — and leaves
+    // the caches (and the host page cache) alone on a run that changed nothing.
+    $vf_ver_before = function_exists('sa_vf_index_version') ? sa_vf_index_version() : null;
+    // Raise the pending-refresh flag now, not at the end. vi_refresh_vehicle_filter()
+    // clears it once the refresh resolves, so a flag still standing means the run
+    // died before it got there — and the admin_init fallback picks it up.
+    update_option('vi_wbw_reindex_needed', time());
 
     foreach ($items as $idx => $data) {
         if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during CREATE pass."); $stopped_early = true; break; }
@@ -1684,9 +1727,12 @@ function vi_create_new_products($budget_sec = null, $item_cap = null, $feed_cach
         }
     }
 
-    // Signal that a reindex is needed; the update cron (30 min later) will
-    // trigger the actual index pass. This avoids two heavy index runs per hour.
-    update_option('vi_wbw_reindex_needed', time());
+    // Rebuild the filter index and drop the page cache embedding it, in this
+    // request. This pass used to only set a flag for the update cron to act on
+    // 30 minutes later, which left newly created vehicles published but
+    // invisible to anonymous visitors for that whole window — and longer when
+    // the update run never reached its own reindex step.
+    vi_refresh_vehicle_filter($vf_ver_before, 'create');
 
     $run_s = round((microtime(true) - $run_t0), 2);
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Create END — created={$created}, elapsed={$run_s}s ===");
@@ -1740,6 +1786,12 @@ function vi_update_existing_products($budget_sec = null, $item_cap = null, $feed
 
     $updated   = 0;
     $processed = 0;
+
+    // See the note in vi_create_new_products(): watermark the filter index so
+    // the end-of-run refresh can skip a pass that changed nothing, and raise the
+    // pending-refresh flag so a truncated run is recoverable.
+    $vf_ver_before = function_exists('sa_vf_index_version') ? sa_vf_index_version() : null;
+    update_option('vi_wbw_reindex_needed', time());
 
     foreach ($items as $idx => $data) {
         if ($time_up()) { sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "Time budget reached during UPDATE pass."); $stopped_early = true; break; }
@@ -1917,13 +1969,16 @@ function vi_update_existing_products($budget_sec = null, $item_cap = null, $feed
         }
     }
 
-    // Trigger reindex
-    wbw_index_after_import_smart(60);
-    update_option('vi_wbw_reindex_needed', time());
-    if (!wp_next_scheduled('wbw_custom_index_cron')) {
-        wp_schedule_single_event(time() + 60, 'wbw_custom_index_cron');
-        log_import_update('[WBW Index] Scheduled wbw_custom_index_cron in 60s.');
-    }
+    // Rebuild the filter index and drop the page cache embedding it.
+    //
+    // This replaces a wbw_index_after_import_smart(60) call plus a deferred
+    // wbw_custom_index_cron event. With Woo Product Filter retired, the direct
+    // indexing path always failed on the missing FrameWpf class and fell
+    // through to a loopback HTTP POST that no plugin answers — burning up to
+    // 60s here, immediately before the line that scheduled the only automatic
+    // cache flush. On a run already near the PHP timeout, that wasted minute is
+    // what killed the request before the flush was ever scheduled.
+    vi_refresh_vehicle_filter($vf_ver_before, 'update');
 
     $run_s = round((microtime(true) - $run_t0), 2);
     sa_motorlease_log('import', SA_MOTORLEASE_LOG_WARN, "=== Update END — updated={$updated}, processed={$processed}/{" . count($items) . "}, elapsed={$run_s}s ===");
@@ -3905,6 +3960,12 @@ add_action( 'wbw_custom_index_cron', function() {
 // --- Deferred reindex on admin_init ----------------------------------------
 // Fallback for sites with WP-Cron disabled. The import sets
 // 'vi_wbw_reindex_needed'; we consume it on the next admin page load.
+//
+// This used to call only wbw_run_custom_indexing(), which has done nothing
+// since Woo Product Filter was retired — so on a site running system cron
+// instead of WP-Cron, the fallback silently stopped refreshing the custom
+// filter at all. It now flushes the filter caches, which is the part that
+// actually matters.
 add_action( 'admin_init', function() {
     // Skip AJAX requests — doMetaIndexingFree() calls exit(), which would
     // kill an unrelated AJAX call happening to fire admin_init first.
@@ -3916,6 +3977,9 @@ add_action( 'admin_init', function() {
     }
     delete_option( 'vi_wbw_reindex_needed' );
     wbw_custom_index_log( 'admin_init deferred reindex triggered' );
+    if ( function_exists( 'sa_vf_flush_caches' ) ) {
+        sa_vf_flush_caches();
+    }
     wbw_run_custom_indexing();
 } );
 
@@ -7113,7 +7177,9 @@ function sa_motorlease_render_status_page() {
         'vi_update_hourly_event'           => 'Vehicle update (hourly)',
         'vehicle_images_repair_event'      => 'Image repair (hourly)',
         'vi_image_sync_cron'               => 'Image sync (5 min)',
-        'wbw_custom_index_cron'            => 'WBW reindex',
+        // Retired: the import passes now refresh the filter in-request. Listed
+        // only so a legacy event still queued from before 2.6.29 is visible.
+        'wbw_custom_index_cron'            => 'Filter reindex (legacy, unscheduled)',
         'set_sold_date_cron_event'         => 'Set sold date (daily)',
         'delete_expired_sold_products_event'=> 'Delete expired sold (daily)',
         'fix_and_replace_broken_images'    => 'Fix broken images',

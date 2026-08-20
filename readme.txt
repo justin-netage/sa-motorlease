@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.28
+Stable tag: 2.6.29
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -19,7 +19,7 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 * Per-run create/update caps and wall-clock budgets
 * Embedded-image decoding from the feed and diff-based gallery sync
 * Image-repair cron and bulk image-sync admin UI
-* WBW index trigger after each run
+* Vehicle-filter index rebuild and host page-cache purge after each run that changed the catalogue
 * Optional pruning of products not in the feed
 * Rolling log in `wp-content/uploads/sa-motorlease-logs/` (survives plugin updates; not reachable over HTTP)
 
@@ -57,6 +57,14 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.29 =
+* **New vehicles now appear on the site as soon as they import, instead of hours or a day later.** They were being created and published correctly — visible in the product list, and visible on the front end to anyone logged in — but anonymous visitors kept seeing the old catalogue. The vehicle grid is not fetched at render time: the whole catalogue is inlined into the page HTML and filtered client-side, so a cached page *is* a frozen vehicle list, and nothing in the plugin ever told the host to purge it. `sa_vf_flush_caches()` now purges the host full-page cache (Kinsta's mu-plugin, behind class/method guards so it is inert elsewhere) after rebuilding the index, and fires a `sa_vf_page_cache_purged` action for any other cache layer to hook.
+* **Fixed the stale-index race that could hide a vehicle for a full day.** The index version was debounced to one bump per request so a bulk import stamped a single version — but any front-end request that rebuilt the index midway through a run then cached an *incomplete* catalogue under that same version, where it read as fresh until the transient expired. The end-of-run flush now force-bumps past any version a mid-run rebuild could be holding, and the per-request memos (index, client dataset, price ladder) are pooled so they can be dropped together rather than surviving the flush and being re-cached stale.
+* **Both import passes now refresh the filter in-request.** Previously only the update pass triggered a reindex, via a `wbw_custom_index_cron` event scheduled 30 minutes after the create pass — so a create-only hour never flushed at all, and a truncated update run never got as far as scheduling it. Each pass now calls the refresh directly, and only when the catalogue actually changed, so a quiet feed no longer discards a warm page cache.
+* **Removed a dead 60-second call from the end of every update run.** With Woo Product Filter retired, `wbw_index_after_import_smart()` always failed on the missing `FrameWpf` class and fell through to a loopback HTTP POST that nothing answers — burning up to a minute immediately before the line that scheduled the only automatic cache flush. On a run already near the PHP timeout, that is what killed the request before the flush was scheduled.
+* **The WP-Cron-disabled fallback works again.** The deferred `admin_init` reindex called only the retired WBW indexer, so on sites running system cron it had silently stopped refreshing the custom filter. It now flushes the filter caches, and the pending-refresh flag is raised on entry to a pass and cleared once the refresh resolves — so a flag still standing means a run died before finishing, and the next admin page load recovers it.
+* **Index cache TTL cut from 24 hours to 1** (`SA_VF_CACHE_TTL`). The version stamp is the real freshness mechanism; the TTL is a fail-safe, and at a day a missed bump meant a stale catalogue survived a full day. A rebuild is a handful of bulk queries, so expiring more often costs little.
 
 = 2.6.18 =
 * **Fixes "Feed fetch failed this slice" in the 2.6.17 batched import runner.** The runner calls `vi_fetch_feed()` once per slice, which turned a twice-hourly request into one every ~20s for the length of a run — enough to get throttled or time out against the PACE host, and every failure aborted a slice that would otherwise have done useful work. The parsed feed is now cached across the slices of a single run (`VI_FEED_CACHE_SEC`, default 180s, compressed before storing since the payload is close enough to the ~1 MB value ceiling some object caches enforce that storing it raw risks being silently dropped). Opening the progress page clears the cache first, so a run always starts against fresh data — you still see a change made in PACE seconds earlier. Both hourly crons are unaffected: the TTL defaults to 0, which always goes to the network.
