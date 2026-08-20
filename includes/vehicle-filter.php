@@ -15,7 +15,21 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.9.7' );
+    define( 'SA_VF_VERSION', '1.9.8' );
+}
+
+/**
+ * How long a cached index/client blob may live without being invalidated.
+ *
+ * This is a fail-safe, not the primary freshness mechanism — the version stamp
+ * is. It caps the blast radius when a version bump is missed: at DAY_IN_SECONDS
+ * a stale catalogue survived a full day, which is precisely how long new
+ * vehicles stayed invisible. An hour keeps the worst case to an hour, and a
+ * rebuild is cheap enough (a handful of bulk queries) that expiring more often
+ * costs little.
+ */
+if ( ! defined( 'SA_VF_CACHE_TTL' ) ) {
+    define( 'SA_VF_CACHE_TTL', HOUR_IN_SECONDS );
 }
 
 /**
@@ -114,15 +128,15 @@ const SA_VF_PRICE_STEP_HIGH  = 2000;
  * the ceilings with nothing under them in the current scope.
  */
 function sa_vf_price_buckets() {
-    static $cache = null;
-    if ( $cache !== null ) return $cache;
+    $memo =& sa_vf_memo();
+    if ( array_key_exists( 'price_buckets', $memo ) ) return $memo['price_buckets'];
 
     list( $low, $high ) = sa_vf_price_range();
 
     // Nothing priced yet (empty catalogue, or a cold cache mid-import): fall
     // back to the fixed ladder so the dropdown still renders something usable.
     if ( $low === null ) {
-        return $cache = sa_vf_price_buckets_fallback();
+        return $memo['price_buckets'] = sa_vf_price_buckets_fallback();
     }
 
     $money = function ( $n ) { return 'R' . number_format( $n, 0, '.', ',' ); };
@@ -153,7 +167,7 @@ function sa_vf_price_buckets() {
         $cap += ( $cap < SA_VF_PRICE_STEP_BREAK ) ? SA_VF_PRICE_STEP_LOW : SA_VF_PRICE_STEP_HIGH;
     }
 
-    return $cache = $buckets;
+    return $memo['price_buckets'] = $buckets;
 }
 
 /**
@@ -165,8 +179,8 @@ function sa_vf_price_buckets() {
  * hides whichever ceilings have nothing under them in view.
  */
 function sa_vf_price_range() {
-    static $range = null;
-    if ( $range !== null ) return $range;
+    $memo =& sa_vf_memo();
+    if ( array_key_exists( 'price_range', $memo ) ) return $memo['price_range'];
 
     $low = null;
     $high = null;
@@ -178,7 +192,7 @@ function sa_vf_price_range() {
         if ( $high === null || $p > $high ) $high = $p;
     }
 
-    return $range = [ $low, $high ];
+    return $memo['price_range'] = [ $low, $high ];
 }
 
 /** The fixed ladder used before the catalogue is readable. */
@@ -320,15 +334,54 @@ function sa_vf_cache_version() {
 }
 
 /**
- * Invalidate the index. Debounced to one bump per request via a static guard so
- * a bulk import touching hundreds of products only stamps a single new version
- * (the rebuild itself is lazy — it happens on the next read, not here).
+ * Per-request memo store for everything derived from the index.
+ *
+ * These were function-local statics. They are pooled here so a flush can drop
+ * them all at once: an import mutates the catalogue *after* some of them are
+ * already populated, and a stale memo would then be re-cached under the new
+ * version — the exact staleness the flush exists to prevent.
+ */
+function &sa_vf_memo() {
+    static $memo = [];
+    return $memo;
+}
+
+/** Drop every per-request memo, so the next read rebuilds from source. */
+function sa_vf_reset_memo() {
+    $memo =& sa_vf_memo();
+    $memo = [];
+}
+
+/**
+ * Invalidate the index. Debounced to one bump per request so a bulk import
+ * touching hundreds of products only stamps a single new version (the rebuild
+ * itself is lazy — it happens on the next read, not here).
+ *
+ * Registered directly as a hook callback, so it must take no meaningful
+ * arguments: WordPress passes the post id to several of these hooks, and any
+ * first parameter would arrive truthy. Use sa_vf_force_bump_index_version()
+ * to bump again within the same request.
  */
 function sa_vf_bump_index_version() {
-    static $done = false;
-    if ( $done ) return;
-    $done = true;
+    $memo =& sa_vf_memo();
+    if ( ! empty( $memo['bumped'] ) ) return;
+    $memo['bumped'] = true;
     update_option( 'sa_vf_index_ver', sa_vf_index_version() + 1, false );
+}
+
+/**
+ * Bump the version even when this request already bumped once.
+ *
+ * The debounce above is what let a partial catalogue go stale for a full day:
+ * an import run saves N products but stamps a single version, and any request
+ * that rebuilt the index midway cached an incomplete catalogue *under that same
+ * version*, where it then read as fresh until the transient expired. Re-arming
+ * at the end of a run stamps a version no mid-run rebuild can already hold.
+ */
+function sa_vf_force_bump_index_version() {
+    $memo =& sa_vf_memo();
+    unset( $memo['bumped'] );
+    sa_vf_bump_index_version();
 }
 
 // Bump on any change to a vehicle: create/update/delete, term reassignment
@@ -361,8 +414,8 @@ add_action( 'deleted_post_meta', function ( $meta_ids, $post_id, $meta_key ) {
 
 /** The cached vehicle index (rows in catalogue/date-DESC order). */
 function sa_vf_index() {
-    static $mem = null;
-    if ( is_array( $mem ) ) return $mem; // one build per request
+    $memo =& sa_vf_memo();
+    if ( array_key_exists( 'index', $memo ) ) return $memo['index']; // one build per request
 
     $ver  = sa_vf_cache_version();
     $rows = sa_vf_index_read( $ver );
@@ -370,7 +423,7 @@ function sa_vf_index() {
         $rows = sa_vf_build_index();
         sa_vf_index_write( $rows, $ver );
     }
-    return $mem = $rows;
+    return $memo['index'] = $rows;
 }
 
 /**
@@ -406,11 +459,11 @@ function sa_vf_blob_write( $key, array $rows, $ver ) {
     if ( function_exists( 'gzcompress' ) ) {
         $z = gzcompress( $body, 6 );
         if ( $z !== false ) {
-            set_transient( $key, 'g:' . base64_encode( $z ), DAY_IN_SECONDS );
+            set_transient( $key, 'g:' . base64_encode( $z ), SA_VF_CACHE_TTL );
             return;
         }
     }
-    set_transient( $key, 'r:' . $body, DAY_IN_SECONDS );
+    set_transient( $key, 'r:' . $body, SA_VF_CACHE_TTL );
 }
 
 // Thin wrappers so callers (and the diagnostic) read clearly.
@@ -425,8 +478,8 @@ function sa_vf_index_write( array $rows, $ver ) { sa_vf_blob_write( 'sa_vf_index
  * version and warmed after each import, exactly like the index itself.
  */
 function sa_vf_client_data() {
-    static $mem = null;
-    if ( is_array( $mem ) ) return $mem;
+    $memo =& sa_vf_memo();
+    if ( array_key_exists( 'client', $memo ) ) return $memo['client'];
 
     $ver  = sa_vf_cache_version();
     $rows = sa_vf_blob_read( 'sa_vf_client', $ver );
@@ -446,7 +499,7 @@ function sa_vf_client_data() {
         }
         sa_vf_blob_write( 'sa_vf_client', $rows, $ver );
     }
-    return $mem = $rows;
+    return $memo['client'] = $rows;
 }
 
 /** Price/km bucket list flattened for JS (open-ended max sent as null = ∞). */
@@ -485,11 +538,11 @@ function sa_vf_post_ids( $posts ) {
 
 /** The index keyed by product id, for O(1) lookups during sort/render. */
 function sa_vf_index_by_id() {
-    static $map = null;
-    if ( is_array( $map ) ) return $map;
+    $memo =& sa_vf_memo();
+    if ( array_key_exists( 'by_id', $memo ) ) return $memo['by_id'];
     $map = [];
     foreach ( sa_vf_index() as $r ) $map[ $r['id'] ] = $r;
-    return $map;
+    return $memo['by_id'] = $map;
 }
 
 /**
@@ -602,22 +655,109 @@ function sa_vf_km_bucket_by_key( $key ) {
     return null;
 }
 
+/** Log to the plugin log if it is loaded; a no-op standalone. */
+function sa_vf_log( $msg ) {
+    if ( function_exists( 'log_import_update' ) ) {
+        log_import_update( '[SA VF] ' . $msg );
+    }
+}
+
 /**
- * Flush + warm the index after the importer reindexes. Bumping first, then
- * reading, rebuilds and re-caches at the new version so the first visitor after
- * an import never waits for a cold build.
+ * Purge the host's full-page cache.
+ *
+ * This is the step that was missing entirely, and without it everything else
+ * here is invisible to the public. The vehicle grid is not fetched at render
+ * time — the whole catalogue is inlined into the page HTML by the shortcode
+ * below and filtered client-side. So a cached page *is* a frozen vehicle list,
+ * and rebuilding the index behind it changes nothing an anonymous visitor sees:
+ * logged-in users bypass the page cache and get fresh stock, everyone else gets
+ * yesterday's until the cache expires on its own.
+ *
+ * Worse, the two caches hold each other in place. The index rebuild is lazy —
+ * it happens on read — but while the page cache is serving anonymous traffic,
+ * PHP never runs on that page, so nothing reads the index and it never
+ * rebuilds. Only a cache expiry or a logged-in visit breaks the cycle.
+ *
+ * Purging the full page cache rather than named URLs is deliberate: the
+ * catalogue is embedded in the listing page, the location archives and any page
+ * carrying a vehicle shortcode, and enumerating those correctly is a guessing
+ * game that fails silently when someone adds a page. Callers only invoke this
+ * when the catalogue actually changed (see the import passes), so on a quiet
+ * feed it never fires.
+ *
+ * Guarded by class/method checks throughout: Kinsta's mu-plugin is absent on
+ * local and staging, and its purge API has shifted across versions.
+ */
+function sa_vf_purge_page_cache() {
+    $purged = false;
+
+    // Kinsta: the mu-plugin exposes a Cache_Purge instance on a global.
+    if ( class_exists( '\Kinsta\Cache' ) && isset( $GLOBALS['kinsta_cache'] ) ) {
+        $kc = $GLOBALS['kinsta_cache'];
+        if ( isset( $kc->kinsta_cache_purge ) && is_object( $kc->kinsta_cache_purge ) ) {
+            $purge = $kc->kinsta_cache_purge;
+            // Prefer the page-cache-only call — the object/transient layer is
+            // ours and we have just rewritten it, so dropping it would only
+            // force a needless rebuild.
+            foreach ( [ 'purge_complete_full_page_cache', 'purge_complete_caches' ] as $method ) {
+                if ( method_exists( $purge, $method ) ) {
+                    try {
+                        $purge->$method();
+                        $purged = true;
+                        sa_vf_log( "Kinsta page cache purged via {$method}()." );
+                    } catch ( Throwable $e ) {
+                        sa_vf_log( "Kinsta purge {$method}() threw: " . $e->getMessage() );
+                    }
+                    break;
+                }
+            }
+            if ( ! $purged ) {
+                sa_vf_log( 'Kinsta cache object found but no known purge method — API changed?' );
+            }
+        }
+    }
+
+    if ( ! $purged ) {
+        sa_vf_log( 'No host page cache purged (Kinsta mu-plugin not detected).' );
+    }
+
+    // Let other cache layers hook in without editing this file.
+    do_action( 'sa_vf_page_cache_purged', $purged );
+
+    return $purged;
+}
+
+/**
+ * Flush + warm the index, then drop the page cache that embeds it.
+ *
+ * Order matters. The version is force-bumped first so no mid-import rebuild can
+ * already be holding the version we are about to write under. The index is then
+ * warmed, and only once it is hot do we purge the page cache — purging first
+ * would open a window where an anonymous visitor triggers a duplicate cold
+ * build.
  */
 function sa_vf_flush_caches() {
-    sa_vf_bump_index_version();
+    // Drop per-request memos before anything else: during an import these are
+    // already populated with the pre-import catalogue, and warming from them
+    // would re-cache stale rows under the fresh version.
+    sa_vf_reset_memo();
+
+    sa_vf_force_bump_index_version();
     delete_transient( 'sa_vf_index' );
     delete_transient( 'sa_vf_client' );
     // Drop legacy caches from earlier versions of this file.
     delete_transient( 'sa_vf_price_bounds' );
     delete_transient( 'sa_vf_make_model_map' );
-    sa_vf_index();       // warm the index
-    sa_vf_client_data(); // warm the client dataset
+
+    $count = count( sa_vf_index() ); // warm the index
+    sa_vf_client_data();             // warm the client dataset
+    sa_vf_log( sprintf( 'Index rebuilt at version %d — %d vehicle(s).', sa_vf_index_version(), $count ) );
+
+    sa_vf_purge_page_cache();
 }
-// Piggyback on the importer's reindex signal so the catalogue stays fresh.
+// Legacy signal from the retired WBW indexer. Kept so any event still queued in
+// wp_cron from before this release resolves to the current flush; the import
+// passes now call sa_vf_flush_caches() directly rather than relying on it.
 add_action( 'wbw_custom_index_cron', 'sa_vf_flush_caches' );
 
 /**
