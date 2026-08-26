@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.29
+ * Version: 2.6.30
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.29' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.30' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -1474,7 +1474,15 @@ function vi_fetch_feed($cache_ttl = 0) {
 
     if ($code !== 200) {
         vi_feed_last_error("PACE returned HTTP {$code} after {$elapsed_ms}ms");
-        log_import_update('Feed HTTP not 200; aborting.');
+        // Say "failed" explicitly: sa_motorlease_log_classify() greps the
+        // message for its level, and the old wording ("not 200") matched none
+        // of its keywords — so it classified as INFO and was dropped at the
+        // default WARN threshold. A non-200 was therefore the one feed failure
+        // that left nothing in the log but "Create END (feed error)", with no
+        // status code to diagnose from. Include a body snippet too: an HTML
+        // error page and a JSON error body point at very different causes.
+        $snippet = trim( preg_replace('/\s+/', ' ', substr((string) $body, 0, 160)) );
+        log_import_update("Feed request failed: PACE returned HTTP {$code} after {$elapsed_ms}ms; body: {$snippet}");
         return null;
     }
 

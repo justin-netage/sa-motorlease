@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.9.8' );
+    define( 'SA_VF_VERSION', '1.9.9' );
 }
 
 /**
@@ -721,11 +721,46 @@ function sa_vf_purge_page_cache() {
         sa_vf_log( 'No host page cache purged (Kinsta mu-plugin not detected).' );
     }
 
+    // Record the version this purge covered, so the shutdown catch-all below
+    // knows the current catalogue has already been published and does not purge
+    // a second time for the same change.
+    $memo =& sa_vf_memo();
+    $memo['purged_ver'] = sa_vf_index_version();
+
     // Let other cache layers hook in without editing this file.
     do_action( 'sa_vf_page_cache_purged', $purged );
 
     return $purged;
 }
+
+/**
+ * Catch-all: purge at end of request whenever the catalogue changed and nothing
+ * has purged at that version yet.
+ *
+ * Wiring the purge into the two import passes was not enough. Plenty of other
+ * things mutate vehicles and bump the index version — the 5-minute image sync,
+ * the image-repair and broken-image crons, the daily sold-date pass, the daily
+ * expired-sold deletion (which changes the vehicle *count*), and any manual
+ * product edit in wp-admin. Each of those left the index correct and the cached
+ * HTML stale, which is the same symptom the import fix was meant to end: right
+ * when logged in, behind when not.
+ *
+ * Hooking the version bump itself rather than each individual caller means a
+ * future cron cannot reintroduce this by forgetting to flush. The bump is
+ * debounced to once per request, so this fires at most once per request, and
+ * only on requests that actually wrote to a vehicle.
+ */
+add_action( 'shutdown', function () {
+    $memo =& sa_vf_memo();
+    if ( empty( $memo['bumped'] ) ) {
+        return; // nothing touched a vehicle this request
+    }
+    if ( isset( $memo['purged_ver'] ) && $memo['purged_ver'] === sa_vf_index_version() ) {
+        return; // already published at this version (the import path)
+    }
+    sa_vf_log( 'Catalogue changed outside an import pass — purging page cache.' );
+    sa_vf_purge_page_cache();
+}, 99 );
 
 /**
  * Flush + warm the index, then drop the page cache that embeds it.
@@ -749,11 +784,20 @@ function sa_vf_flush_caches() {
     delete_transient( 'sa_vf_price_bounds' );
     delete_transient( 'sa_vf_make_model_map' );
 
+    // Purge before warming, not after.
+    //
+    // The warm renders a card for every vehicle in the catalogue, so it is by
+    // far the most expensive step here — and an import run is exactly where the
+    // PHP timeout bites. A purge queued behind the warm never happens when the
+    // request is killed part-way through it, leaving the transients dropped but
+    // the stale HTML still being served: index correct, page wrong. Purging
+    // first risks only a short window in which one visitor triggers a cold
+    // build; purging last risks a day of stale stock for everyone.
+    sa_vf_purge_page_cache();
+
     $count = count( sa_vf_index() ); // warm the index
     sa_vf_client_data();             // warm the client dataset
     sa_vf_log( sprintf( 'Index rebuilt at version %d — %d vehicle(s).', sa_vf_index_version(), $count ) );
-
-    sa_vf_purge_page_cache();
 }
 // Legacy signal from the retired WBW indexer. Kept so any event still queued in
 // wp_cron from before this release resolves to the current flush; the import
