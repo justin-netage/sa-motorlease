@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.29
+Stable tag: 2.6.30
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,11 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.30 =
+* **Purge the page cache on *any* catalogue change, not just imports.** 2.6.29 wired the purge into the two import passes, which was not enough: the 5-minute image sync, the image-repair and broken-image crons, the daily sold-date pass, the daily expired-sold deletion (which changes the vehicle *count*) and any manual product edit in wp-admin all bump the index version without going near an import pass. Each left the index correct and the cached HTML stale — the same "right when logged in, behind when not" symptom 2.6.29 was meant to end. The purge now hangs off the version bump itself via a `shutdown` hook, so a future cron cannot reintroduce this by forgetting to flush. It fires at most once per request and only on requests that actually wrote to a vehicle, so ordinary page views are unaffected.
+* **Purge before warming the index, not after.** The warm renders a card for every vehicle and is by far the most expensive step in a flush — and an import run is exactly where the PHP timeout bites. A purge queued behind the warm never happens when the request is killed part-way through it, leaving the transients dropped but the stale HTML still served. Purging first risks only a short window in which one visitor triggers a cold build; purging last risked a day of stale stock for everyone.
+* **A failing feed no longer hides its reason.** A non-200 from PACE logged `Feed HTTP not 200; aborting.`, which matched none of the log classifier's keywords, so it was filed as INFO and dropped at the default WARN threshold — leaving nothing in the log but `Create END (feed error)` and no status code to diagnose from. It now logs the status code, the elapsed time and a short body snippet at WARN, so an HTML error page and a JSON error body are distinguishable at a glance.
 
 = 2.6.29 =
 * **New vehicles now appear on the site as soon as they import, instead of hours or a day later.** They were being created and published correctly — visible in the product list, and visible on the front end to anyone logged in — but anonymous visitors kept seeing the old catalogue. The vehicle grid is not fetched at render time: the whole catalogue is inlined into the page HTML and filtered client-side, so a cached page *is* a frozen vehicle list, and nothing in the plugin ever told the host to purge it. `sa_vf_flush_caches()` now purges the host full-page cache (Kinsta's mu-plugin, behind class/method guards so it is inert elsewhere) after rebuilding the index, and fires a `sa_vf_page_cache_purged` action for any other cache layer to hook.
