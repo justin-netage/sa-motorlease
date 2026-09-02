@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.30
+Stable tag: 2.6.31
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,11 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.31 =
+* **Sold vehicles are shown by default again.** The "Available Only" toggle introduced in 2.5.0 was pre-checked, so an anonymous visitor's first view of the catalogue silently excluded every sold vehicle — the site looked smaller than the stock actually is, and the SOLD badge was effectively unreachable without knowing to untick a box. The toggle now starts **unchecked**: sold vehicles are listed alongside available ones, badged SOLD, and ticking "Available Only" hides them. The URL parameter inverts to match — the deviation from the default is now `?available_only=1` rather than `?show_sold=1`. Links shared while the old default was in force still resolve to the same view, since `show_sold=1` asked for what is now the default anyway.
+* **Sold vehicles are no longer pushed to the last page.** They previously sorted below every available vehicle regardless of the chosen sort, which was tolerable while they were hidden by default but not once they are shown: sorting by price produced a price-ordered list whose sold entries were all stranded at the end, so the order the visitor asked for was not the order they got. Sold vehicles now take their natural place in whichever sort is active and are distinguished by the badge on the card rather than by position. Applied to both the server-side sort and its client-side mirror, which had the same rule duplicated.
+* Filter asset version bumped to 2.0.0, which also busts the cached vehicle index, client dataset and per-query payload caches — those embed the rendered order, so they have to be rebuilt for the sort change to take effect rather than waiting out the hour TTL.
 
 = 2.6.30 =
 * **Purge the page cache on *any* catalogue change, not just imports.** 2.6.29 wired the purge into the two import passes, which was not enough: the 5-minute image sync, the image-repair and broken-image crons, the daily sold-date pass, the daily expired-sold deletion (which changes the vehicle *count*) and any manual product edit in wp-admin all bump the index version without going near an import pass. Each left the index correct and the cached HTML stale — the same "right when logged in, behind when not" symptom 2.6.29 was meant to end. The purge now hangs off the version bump itself via a `shutdown` hook, so a future cron cannot reintroduce this by forgetting to flush. It fires at most once per request and only on requests that actually wrote to a vehicle, so ordinary page views are unaffected.
