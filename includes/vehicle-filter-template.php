@@ -107,13 +107,13 @@ $sel    = $initial['facets'];
                     </select>
                 </div>
 
-                <?php // Availability — "Available Only" is on by default; unchecking shows sold vehicles ?>
+                <?php // Availability — "Available Only" is off by default; checking it hides sold vehicles ?>
                 <div class="sa-vf-field sa-vf-field--check">
                     <label class="sa-vf-check">
                         <input type="checkbox" name="available_only" value="1" <?php checked( $initial['hide_sold'] ); ?>>
                         <span>Available Only</span>
                     </label>
-                    <p class="sa-vf-check__hint">Uncheck to show sold vehicles</p>
+                    <p class="sa-vf-check__hint">Check to hide sold vehicles</p>
                 </div>
 
                 <?php

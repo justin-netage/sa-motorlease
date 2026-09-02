@@ -56,7 +56,7 @@
 
     /** Read the current filter state from the form controls. */
     function collect() {
-        var a = { facets: {}, price: '', km: '', region: '', hideSold: true, sort: 'featured' };
+        var a = { facets: {}, price: '', km: '', region: '', hideSold: false, sort: 'featured' };
         form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
             var k = s.getAttribute('data-facet');
             if (k === 'price')  { a.price = s.value; return; }
@@ -64,8 +64,9 @@
             if (k === 'region') { a.region = s.value; return; } // product_cat term id
             if (s.value) a.facets[k] = s.value;
         });
-        // "Available Only" checked (default) hides sold; unchecking shows them.
-        a.hideSold = availToggle ? !!availToggle.checked : true;
+        // "Available Only" is unchecked by default, so sold vehicles show;
+        // checking it hides them.
+        a.hideSold = availToggle ? !!availToggle.checked : false;
         if (sortSel && sortSel.value) a.sort = sortSel.value;
         return a;
     }
@@ -93,11 +94,10 @@
         });
     }
 
-    /** Sort a matched set: sold always last, then by the chosen key. */
+    /** Sort a matched set by the chosen key. Sold vehicles are not demoted —
+        they sort in their natural place and carry the SOLD badge instead. */
     function sortData(arr, sort) {
         return arr.slice().sort(function (A, B) {
-            var sa = A.sold ? 1 : 0, sb = B.sold ? 1 : 0;
-            if (sa !== sb) return sa - sb;
             switch (sort) {
                 case 'price_asc':  return (A.price || 0) - (B.price || 0);
                 case 'price_desc': return (B.price || 0) - (A.price || 0);
@@ -171,7 +171,7 @@
         if (a.price) qs.set('price', a.price);
         if (a.km) qs.set('km', a.km);
         if (a.region) qs.set('region', a.region);
-        if (!a.hideSold) qs.set('show_sold', '1');
+        if (a.hideSold) qs.set('available_only', '1');
         if (a.sort && a.sort !== 'featured') qs.set('sort', a.sort);
         var url = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
         window.history.replaceState(null, '', url);
@@ -332,10 +332,10 @@
                 }
             });
         });
-        if (availToggle && !availToggle.checked) {
+        if (availToggle && availToggle.checked) {
             chips.push({
-                label: 'Including sold',
-                clear: function () { availToggle.checked = true; rerun(); }
+                label: 'Available only',
+                clear: function () { availToggle.checked = false; rerun(); }
             });
         }
 
@@ -378,8 +378,8 @@
         form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
             if (s.value) n++;
         });
-        // Showing sold vehicles is a deviation from the default, so it counts.
-        if (availToggle && !availToggle.checked) n++;
+        // Hiding sold vehicles is a deviation from the default, so it counts.
+        if (availToggle && availToggle.checked) n++;
         if (toggleCount) {
             toggleCount.textContent = n;
             toggleCount.hidden = n === 0;
@@ -588,8 +588,8 @@
             s.value = '';
             s.dispatchEvent(new Event('sa-vf-sync')); // keep combo displays in step
         });
-        // "Available Only" is the default state.
-        if (availToggle) availToggle.checked = true;
+        // Unchecked ("show everything") is the default state.
+        if (availToggle) availToggle.checked = false;
         if (sortSel) sortSel.value = 'featured';
         rerun();
     }

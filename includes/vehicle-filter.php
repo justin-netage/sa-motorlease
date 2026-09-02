@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '1.9.9' );
+    define( 'SA_VF_VERSION', '2.0.0' );
 }
 
 /**
@@ -962,9 +962,11 @@ function sa_vf_parse_args( array $src ) {
     $args = [
         'sort'     => 'featured',
         'page'     => 1,
-        // "Available Only" is on by default — sold vehicles are hidden unless the
-        // visitor explicitly opts to show them (show_sold=1).
-        'hide_sold'=> ! in_array( $str( 'show_sold' ), [ '1', 'on', 'true', 'yes' ], true ),
+        // "Available Only" is OFF by default — sold vehicles are listed alongside
+        // available ones (badged SOLD) unless the visitor opts to hide them
+        // (available_only=1). Links shared while the old default was in force
+        // carry show_sold=1, which now resolves to the same view either way.
+        'hide_sold'=> in_array( $str( 'available_only' ), [ '1', 'on', 'true', 'yes' ], true ),
         'km'       => $str( 'km' ),
         'price'    => '', // max-price ceiling key (see sa_vf_price_buckets)
         'region'   => 0, // product_cat location term the visitor chose in the Region filter
@@ -1147,7 +1149,16 @@ function sa_vf_term_num( $id, $taxonomy ) {
     return (int) preg_replace( '/[^0-9]/', '', $t->name );
 }
 
-/** Sort matching IDs from the index (no DB) honouring the sort key + sold-last. */
+/**
+ * Sort matching IDs from the index (no DB) honouring the sort key.
+ *
+ * Sold vehicles are NOT demoted. They previously sorted below every available
+ * one, which pushed them onto the last page — and with sold stock now shown by
+ * default, that would mean a visitor sorting by price got a price-ordered list
+ * that silently excluded the sold vehicles until they paged to the very end.
+ * They now take their natural place in the chosen order, distinguished by the
+ * SOLD badge on the card rather than by position.
+ */
 function sa_vf_sort_ids( array $ids, $sort ) {
     $map = sa_vf_index_by_id();
     $pos = array_flip( $ids ); // incoming catalogue order → 'featured' fallback
@@ -1155,11 +1166,6 @@ function sa_vf_sort_ids( array $ids, $sort ) {
     usort( $ids, function ( $a, $b ) use ( $map, $pos, $sort ) {
         $ra = $map[ $a ] ?? null;
         $rb = $map[ $b ] ?? null;
-
-        // Sold-last: sold vehicles always sink below available ones.
-        $sa = ( $ra && $ra['sold'] ) ? 1 : 0;
-        $sb = ( $rb && $rb['sold'] ) ? 1 : 0;
-        if ( $sa !== $sb ) return $sa <=> $sb;
 
         switch ( $sort ) {
             case 'price_asc':  return (float) ( $ra['price'] ?? 0 ) <=> (float) ( $rb['price'] ?? 0 );
