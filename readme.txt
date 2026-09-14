@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.31
+Stable tag: 2.6.32
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.32 =
+* **Dead vehicle URLs now redirect to live stock instead of a 404.** Vehicles are hard-deleted when they drop out of the PACE feed (prune) or a week after they sell, and nothing told anyone holding the old link: Google kept the pages indexed for weeks (every top result for `site:samotorlease.co.za/listing/` was a 404), shared WhatsApp links and browser history went dead, and an anonymous visitor could be served a cached listing grid rendered before the deletion. Any 404 under the product permalink base (`/listing/…`) is now a 301 to the listings page, narrowed to the vehicle's make when the slug names one that still has stock (`/listings/?make=citroen`), so the visitor lands on comparable vehicles and search engines are told to drop the URL. Sent with no-cache headers so a slug reissued to a new vehicle later is not shadowed by a browser- or edge-cached redirect.
+* **Purge the page cache while deleting, not only afterwards.** The prune pass and the daily expired-sold cron each delete vehicles one at a time and flushed once at the end. A product page is 404 the instant its row is gone, but the cached grid kept linking to it until that final flush — minutes later when the loop is slow (each deletion also removes attachments), or never when the run was killed first. This is the window a visitor hit when clicking five Citroens from a listing served at 08:38 that had all already been deleted. Both loops now purge after each deletion, throttled to once per 30 s so a mass prune does not hammer the host purge API, and the end-of-request catch-all stays armed for anything deleted after the last mid-run purge.
 
 = 2.6.31 =
 * **Sold vehicles are shown by default again.** The "Available Only" toggle introduced in 2.5.0 was pre-checked, so an anonymous visitor's first view of the catalogue silently excluded every sold vehicle — the site looked smaller than the stock actually is, and the SOLD badge was effectively unreachable without knowing to untick a box. The toggle now starts **unchecked**: sold vehicles are listed alongside available ones, badged SOLD, and ticking "Available Only" hides them. The URL parameter inverts to match — the deviation from the default is now `?available_only=1` rather than `?show_sold=1`. Links shared while the old default was in force still resolve to the same view, since `show_sold=1` asked for what is now the default anyway.

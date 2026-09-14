@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.31
+ * Version: 2.6.32
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.31' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.32' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -50,6 +50,10 @@ require_once SA_MOTORLEASE_DIR . 'includes/webp-converter.php';
 
 // Maintenance mode — branded 503 holding page for the public site.
 require_once SA_MOTORLEASE_DIR . 'includes/maintenance-mode.php';
+
+// Dead vehicle URLs (pruned / expired-sold products) 301 to the listings page
+// instead of the theme 404 — covers Google, shared links and stale cached grids.
+require_once SA_MOTORLEASE_DIR . 'includes/dead-listing-redirect.php';
 
 // Site notice — banner + once-per-session popup, for when the site stays up
 // but something behind it (e.g. the PACE lead API) is degraded.
@@ -1545,6 +1549,20 @@ function vi_refresh_vehicle_filter($ver_before, $label) {
     return true;
 }
 
+/**
+ * Purge the page cache from inside a loop that deletes vehicles one by one.
+ *
+ * The end-of-run flush above is too late for the vehicle deleted first: its
+ * page is 404 immediately, while the cached grid keeps linking to it until the
+ * loop finishes. Throttled inside the filter module, so calling it after every
+ * deletion is cheap. No-op when the filter module is not loaded.
+ */
+function vi_purge_after_delete() {
+    if (function_exists('sa_vf_purge_page_cache_during_deletes')) {
+        sa_vf_purge_page_cache_during_deletes();
+    }
+}
+
 // === Create: import new vehicles from feed ==================================
 
 /**
@@ -1966,6 +1984,7 @@ function vi_update_existing_products($budget_sec = null, $item_cap = null, $feed
                     log_import_update("Prune: SKU {$sku} not in feed → removing product_id={$pid}");
                     vi_delete_product_and_images($pid);
                     $pruned++;
+                    vi_purge_after_delete();
                 }
             }
         }
@@ -4373,6 +4392,7 @@ function delete_expired_sold_products() {
         if ( $dt && $dt->getTimestamp() < $seven_days_ago ) {
             wp_delete_post( $pid, true );
             log_to_file( "Deleted product ID: {$pid} marked as sold for more than 7 days.", 'sold-vehicles.log' );
+            vi_purge_after_delete();
         }
     }
 }
