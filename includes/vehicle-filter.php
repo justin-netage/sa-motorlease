@@ -772,6 +772,28 @@ add_action( 'shutdown', function () {
  * build.
  */
 function sa_vf_flush_caches() {
+    sa_vf_drop_caches();
+
+    $count = count( sa_vf_index() ); // warm the index
+    sa_vf_client_data();             // warm the client dataset
+    sa_vf_log( sprintf( 'Index rebuilt at version %d — %d vehicle(s).', sa_vf_index_version(), $count ) );
+}
+
+/**
+ * The invalidation half of a flush: bump the version, drop every cached
+ * derivative and purge the page cache — without warming anything.
+ *
+ * Purge before warming, not after.
+ *
+ * The warm renders a card for every vehicle in the catalogue, so it is by
+ * far the most expensive step in a flush — and an import run is exactly where
+ * the PHP timeout bites. A purge queued behind the warm never happens when the
+ * request is killed part-way through it, leaving the transients dropped but
+ * the stale HTML still being served: index correct, page wrong. Purging first
+ * risks only a short window in which one visitor triggers a cold build;
+ * purging last risks a day of stale stock for everyone.
+ */
+function sa_vf_drop_caches() {
     // Drop per-request memos before anything else: during an import these are
     // already populated with the pre-import catalogue, and warming from them
     // would re-cache stale rows under the fresh version.
@@ -784,20 +806,45 @@ function sa_vf_flush_caches() {
     delete_transient( 'sa_vf_price_bounds' );
     delete_transient( 'sa_vf_make_model_map' );
 
-    // Purge before warming, not after.
-    //
-    // The warm renders a card for every vehicle in the catalogue, so it is by
-    // far the most expensive step here — and an import run is exactly where the
-    // PHP timeout bites. A purge queued behind the warm never happens when the
-    // request is killed part-way through it, leaving the transients dropped but
-    // the stale HTML still being served: index correct, page wrong. Purging
-    // first risks only a short window in which one visitor triggers a cold
-    // build; purging last risks a day of stale stock for everyone.
     sa_vf_purge_page_cache();
+}
 
-    $count = count( sa_vf_index() ); // warm the index
-    sa_vf_client_data();             // warm the client dataset
-    sa_vf_log( sprintf( 'Index rebuilt at version %d — %d vehicle(s).', sa_vf_index_version(), $count ) );
+/**
+ * Purge from inside a pass that deletes vehicles one at a time.
+ *
+ * The prune pass and the expired-sold cron each delete N products in a loop and
+ * flush once at the end. A product page goes 404 the instant its row is gone,
+ * but the cached listing grid kept linking to it until that end-of-run flush —
+ * minutes later when the loop is slow (each deletion also removes attachments),
+ * or never when the run is killed first. Visitors clicking through from the
+ * grid in that window got the theme 404. Calling this after each deletion
+ * shrinks the window to at most $min_interval seconds.
+ *
+ * Throttled so a mass prune does not hit the host purge API once per vehicle,
+ * and deliberately *not* recorded as the request's final purge: the shutdown
+ * catch-all must still fire for whatever was deleted after the last mid-run
+ * purge if the run dies before its own flush.
+ *
+ * @param int $min_interval Seconds between purges within one request. The
+ *                          first call in a request always purges.
+ */
+function sa_vf_purge_page_cache_during_deletes( $min_interval = 30 ) {
+    static $last_at = null; // a static, not a memo: sa_vf_drop_caches() wipes the memo
+    $now = microtime( true );
+    if ( $last_at !== null && ( $now - $last_at ) < $min_interval ) {
+        return false;
+    }
+    $last_at = $now;
+
+    // A full drop, not a bare page purge: the version bump is debounced to one
+    // per request, so after the first deletion the index transient would be
+    // rebuilt under a version that later deletions never move — and a cold
+    // page build after a bare purge would read that stale index straight back.
+    sa_vf_drop_caches();
+
+    $memo =& sa_vf_memo();
+    unset( $memo['purged_ver'] ); // keep the shutdown catch-all armed
+    return true;
 }
 // Legacy signal from the retired WBW indexer. Kept so any event still queued in
 // wp_cron from before this release resolves to the current flush; the import
