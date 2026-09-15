@@ -664,6 +664,11 @@
 /* ===========================================================================
  * Featured listings slider — draggable + prev/next arrows.
  * Independent of the filter above so it also works on featured-only pages.
+ *
+ * Only the first batch of cards is in the page. When the wrapper carries
+ * data-more (remaining product IDs), the next batch is fetched and appended
+ * as the visitor keeps clicking Next / dragging towards the end, so the strip
+ * grows on demand rather than shipping every vehicle up front.
  * ======================================================================== */
 (function () {
     'use strict';
@@ -676,25 +681,89 @@
         var prev = el.querySelector('.sa-vf-featured__nav--prev');
         var next = el.querySelector('.sa-vf-featured__nav--next');
 
+        // Remaining IDs to load, consumed a batch at a time.
+        var queue   = (el.dataset.more || '').split(',').filter(Boolean);
+        var batch   = Math.max(1, parseInt(el.dataset.batch, 10) || 8);
+        var ajaxUrl = el.dataset.ajax || '';
+        var loading = false;
+
         function page() {
             // Scroll by roughly one viewport-width of cards.
             return Math.max(240, Math.round(track.clientWidth * 0.9));
         }
 
+        function hasMore() { return queue.length > 0 && !!ajaxUrl; }
+
         function update() {
             var max = track.scrollWidth - track.clientWidth - 2;
             var hasOverflow = max > 0;
             if (prev) prev.disabled = !hasOverflow || track.scrollLeft <= 0;
-            if (next) next.disabled = !hasOverflow || track.scrollLeft >= max;
+            // Next stays live while there is more to fetch, even at the end.
+            if (next) next.disabled = !hasMore() && (!hasOverflow || track.scrollLeft >= max);
+        }
+
+        // Fetch and append the next batch. Resolves once the cards are in the
+        // track (or immediately when there is nothing left / already loading).
+        function loadMore() {
+            if (!hasMore() || loading) return Promise.resolve(false);
+            loading = true;
+            el.classList.add('is-loading');
+            var ids = queue.splice(0, batch);
+
+            var body = new URLSearchParams();
+            body.set('action', 'sa_vf_cards');
+            body.set('ids', ids.join(','));
+
+            return fetch(ajaxUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: body.toString()
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                var html = (res && res.success && res.data && res.data.html) || '';
+                if (html) track.insertAdjacentHTML('beforeend', html);
+                return !!html;
+            })
+            .catch(function () {
+                // Put the batch back so the next click retries it.
+                queue = ids.concat(queue);
+                return false;
+            })
+            .then(function (ok) {
+                loading = false;
+                el.classList.remove('is-loading');
+                update();
+                return ok;
+            });
+        }
+
+        function nearEnd() {
+            return track.scrollLeft + track.clientWidth >= track.scrollWidth - page();
         }
 
         if (prev) prev.addEventListener('click', function () {
             track.scrollBy({ left: -page(), behavior: 'smooth' });
         });
         if (next) next.addEventListener('click', function () {
+            var atEnd = track.scrollLeft >= track.scrollWidth - track.clientWidth - 2;
+            if (atEnd && hasMore()) {
+                // Nothing left to scroll to yet: fetch first, then advance.
+                loadMore().then(function (ok) {
+                    if (ok) track.scrollBy({ left: page(), behavior: 'smooth' });
+                });
+                return;
+            }
             track.scrollBy({ left: page(), behavior: 'smooth' });
+            // Pre-fetch so the following click has cards waiting.
+            if (nearEnd()) loadMore();
         });
-        track.addEventListener('scroll', update, { passive: true });
+        track.addEventListener('scroll', function () {
+            update();
+            // Drag / trackpad / touch users reach the end without the arrow.
+            if (nearEnd()) loadMore();
+        }, { passive: true });
         window.addEventListener('resize', update);
 
         // Pointer drag-to-scroll.

@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '2.0.0' );
+    define( 'SA_VF_VERSION', '2.0.1' );
 }
 
 /**
@@ -1587,6 +1587,7 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
     // them, newest first, regardless of $limit or the de-dupe mode. (Both used
     // to apply here too, so with 17 flagged vehicles across 9 makes the strip
     // showed 8 — one per make — and padded the rest with unflagged stock.)
+    // The strip only *renders* $limit at a time — see sa_vf_render_featured.
     $out = sa_vf_post_ids( get_posts( [
         'post_type'      => 'product',
         'post_status'    => 'publish',
@@ -1670,18 +1671,61 @@ function sa_vf_featured_shell( $items_html, $title = '', $full = false, $attrs =
     return ob_get_clean();
 }
 
-/** Render the featured strip. Returns '' when there are no products. */
+/**
+ * Render the featured strip. Returns '' when there are no products.
+ *
+ * Only the first $limit cards are in the page; the rest ride along as IDs in
+ * data-more and are fetched a batch at a time (sa_vf_ajax_cards) as the
+ * visitor keeps clicking / dragging towards the end of the strip. Keeps the
+ * initial HTML the same size however many vehicles are flagged.
+ */
 function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false, $attrs = [], $extra_class = '', $dedupe = 'make' ) {
-    $ids = sa_vf_featured_ids( $category_id, $limit, $dedupe );
+    $limit = max( 1, (int) $limit );
+    $ids   = sa_vf_featured_ids( $category_id, $limit, $dedupe );
     if ( ! $ids ) return '';
+
+    $first = array_slice( $ids, 0, $limit );
+    $more  = array_slice( $ids, $limit );
 
     $items = '';
     // The strip renders above the grid, so its first couple of cards are the
     // usual LCP candidates on archive pages — fetch those at high priority.
-    foreach ( array_values( $ids ) as $i => $id ) {
+    foreach ( $first as $i => $id ) {
         $items .= '<div class="sa-vf-featured__item">' . sa_vf_render_card( $id, $i < 2 ) . '</div>';
     }
+    if ( $more ) {
+        $attrs['data-more']  = implode( ',', $more );
+        $attrs['data-batch'] = $limit;
+        $attrs['data-ajax']  = admin_url( 'admin-ajax.php' );
+    }
     return sa_vf_featured_shell( $items, $title, $full, $attrs, '', $extra_class );
+}
+
+add_action( 'wp_ajax_sa_vf_cards',        'sa_vf_ajax_cards' );
+add_action( 'wp_ajax_nopriv_sa_vf_cards', 'sa_vf_ajax_cards' );
+
+/**
+ * Next batch of carousel cards for a comma-separated list of product IDs, in
+ * the order given. Public product markup only, so — like sa_vf_qualified —
+ * not nonce-gated (the calling page is served from the full-page cache).
+ * IDs that are no longer live products (sold-and-deleted since the page was
+ * cached) are simply skipped.
+ */
+function sa_vf_ajax_cards() {
+    $raw = isset( $_POST['ids'] ) ? (string) wp_unslash( $_POST['ids'] ) : '';
+    $ids = array_values( array_unique( array_filter( array_map( 'intval', explode( ',', $raw ) ) ) ) );
+    $ids = array_slice( $ids, 0, 30 );
+
+    $html  = '';
+    $count = 0;
+    foreach ( $ids as $id ) {
+        if ( get_post_type( $id ) !== 'product' || get_post_status( $id ) !== 'publish' ) continue;
+        $card = sa_vf_render_card( $id );
+        if ( $card === '' ) continue;
+        $html .= '<div class="sa-vf-featured__item">' . $card . '</div>';
+        $count++;
+    }
+    wp_send_json_success( [ 'html' => $html, 'count' => $count ] );
 }
 
 /**
@@ -1717,7 +1761,7 @@ add_shortcode( 'sa_featured_vehicles', 'sa_vf_featured_shortcode' );
 function sa_vf_featured_shortcode( $atts ) {
     $atts = shortcode_atts( [
         'category'  => '',                // product_cat id/slug; empty = current archive term
-        'limit'     => 8,                 // minimum cards: flagged vehicles always all show, newest stock tops up to this
+        'limit'     => 8,                 // cards per batch; flagged vehicles all show (loaded as the visitor scrolls), newest stock tops up to this
         'title'     => 'Featured Listings',
         'full'      => 'no',              // "yes" = full-bleed width
         'max_width' => '',                // e.g. 1100 or 1100px to tighten the container

@@ -215,6 +215,8 @@
     box-shadow: 0 4px 14px rgba(244,123,36,.4);
 }
 .sa-vf-featured .sa-vf-featured__nav:disabled { opacity: 0; pointer-events: none; }
+/* Next batch of cards is being fetched. */
+.sa-vf-featured.is-loading .sa-vf-featured__nav--next { opacity: .5; cursor: progress; }
 
 @media (max-width: 1024px) {
     .sa-vf-featured__track { grid-auto-columns: calc((100% - 44px) / 3); }
