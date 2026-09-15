@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '2.0.1' );
+    define( 'SA_VF_VERSION', '2.0.2' );
 }
 
 /**
@@ -490,6 +490,7 @@ function sa_vf_client_data() {
                 'id'    => $r['id'],
                 'price' => $r['price'],           // number|null
                 'sold'  => $r['sold'] ? 1 : 0,
+                'ft'    => ! empty( $r['featured'] ) ? 1 : 0,
                 'km'    => $r['km'],               // number|null
                 'year'  => $r['year'],             // number|null
                 'f'     => (object) $r['facets'],  // { facetKey: [slugs] }
@@ -566,7 +567,9 @@ function sa_vf_build_index() {
     // Every taxonomy we need, fetched for all products in a single query.
     $taxes = [];
     foreach ( sa_vf_facets() as $f ) $taxes[] = $f['tax'];
-    $taxes = array_merge( $taxes, [ 'pa_kilometers', 'pa_sold', 'product_cat' ] );
+    // product_visibility carries WooCommerce's "Featured" flag (term slug
+    // `featured`), which the default "Featured" sort promotes.
+    $taxes = array_merge( $taxes, [ 'pa_kilometers', 'pa_sold', 'product_cat', 'product_visibility' ] );
     $taxes = array_values( array_unique( array_filter( $taxes, 'taxonomy_exists' ) ) );
 
     $by_obj = [];
@@ -621,6 +624,11 @@ function sa_vf_build_index() {
             if ( strcasecmp( $t->name, 'Yes' ) === 0 ) { $sold = true; break; }
         }
 
+        $featured = false;
+        foreach ( ( $ot['product_visibility'] ?? [] ) as $t ) {
+            if ( $t->slug === 'featured' ) { $featured = true; break; }
+        }
+
         $cats = [];
         foreach ( ( $ot['product_cat'] ?? [] ) as $t ) {
             $cats[ (int) $t->term_id ] = true;
@@ -631,13 +639,14 @@ function sa_vf_build_index() {
             ? (float) $price_by_id[ $id ] : null;
 
         $index[] = [
-            'id'     => (int) $id,
-            'price'  => $price,
-            'sold'   => $sold,
-            'km'     => $km,
-            'year'   => $year,
-            'facets' => $facets,
-            'cats'   => array_keys( $cats ),
+            'id'       => (int) $id,
+            'price'    => $price,
+            'sold'     => $sold,
+            'featured' => $featured,
+            'km'       => $km,
+            'year'     => $year,
+            'facets'   => $facets,
+            'cats'     => array_keys( $cats ),
         ];
     }
     return $index;
@@ -1205,12 +1214,20 @@ function sa_vf_term_num( $id, $taxonomy ) {
  * that silently excluded the sold vehicles until they paged to the very end.
  * They now take their natural place in the chosen order, distinguished by the
  * SOLD badge on the card rather than by position.
+ *
+ * "Featured" (the default) puts the vehicles flagged Featured in WooCommerce
+ * first — available ones only, a sold vehicle has no business leading the
+ * catalogue — and everything else follows in catalogue order. It used to be
+ * catalogue order alone, which is date-descending, so it was "Recently Added"
+ * under another name and flagging a vehicle changed nothing in the grid.
  */
 function sa_vf_sort_ids( array $ids, $sort ) {
     $map = sa_vf_index_by_id();
     $pos = array_flip( $ids ); // incoming catalogue order → 'featured' fallback
 
-    usort( $ids, function ( $a, $b ) use ( $map, $pos, $sort ) {
+    $lead = function ( $r ) { return ( ! empty( $r['featured'] ) && empty( $r['sold'] ) ) ? 1 : 0; };
+
+    usort( $ids, function ( $a, $b ) use ( $map, $pos, $sort, $lead ) {
         $ra = $map[ $a ] ?? null;
         $rb = $map[ $b ] ?? null;
 
@@ -1222,7 +1239,8 @@ function sa_vf_sort_ids( array $ids, $sort ) {
             case 'km_asc':     return (int)   ( $ra['km']    ?? 0 ) <=> (int)   ( $rb['km']    ?? 0 );
             case 'newest':     return $b <=> $a; // higher post ID = more recent
             case 'featured':
-            default:           return ( $pos[ $a ] ?? 0 ) <=> ( $pos[ $b ] ?? 0 );
+            default:
+                return ( $lead( $rb ) <=> $lead( $ra ) ) ?: ( ( $pos[ $a ] ?? 0 ) <=> ( $pos[ $b ] ?? 0 ) );
         }
     } );
     return $ids;

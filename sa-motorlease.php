@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.33
+ * Version: 2.6.34
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.33' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.34' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -58,6 +58,34 @@ require_once SA_MOTORLEASE_DIR . 'includes/dead-listing-redirect.php';
 // Site notice — banner + once-per-session popup, for when the site stays up
 // but something behind it (e.g. the PACE lead API) is degraded.
 require_once SA_MOTORLEASE_DIR . 'includes/site-notice.php';
+
+/**
+ * Publish a new plugin version to anonymous visitors.
+ *
+ * A plugin update changes what pages render — markup, asset versions, card
+ * HTML — but nothing purges the host's full-page cache for it: that only
+ * happens on catalogue changes. So after every release the public site kept
+ * serving the pre-update HTML (old script version, old carousel markup) until
+ * the next import happened to flush it, and "I released it and nothing
+ * changed" was the result. The update request itself can't do this either —
+ * it runs the *old* code, the new files only load on the next request.
+ *
+ * So: on the first request that runs under a new version, drop the vehicle
+ * caches (the rendered cards live in them) and purge the page cache. Recorded
+ * first so concurrent requests don't repeat it. Only the vehicle-filter module
+ * knows how to purge, so this is a no-op where that module isn't loaded.
+ */
+add_action( 'init', function () {
+    $seen = get_option( 'sa_motorlease_published_version', '' );
+    if ( $seen === SA_MOTORLEASE_VERSION ) return;
+    update_option( 'sa_motorlease_published_version', SA_MOTORLEASE_VERSION, true );
+
+    if ( ! function_exists( 'sa_vf_drop_caches' ) ) return;
+    if ( function_exists( 'log_import_update' ) ) {
+        log_import_update( sprintf( 'Plugin version changed (%s -> %s): dropping vehicle caches and purging the page cache.', $seen ?: 'none', SA_MOTORLEASE_VERSION ) );
+    }
+    sa_vf_drop_caches();
+}, 5 );
 
 // === CONFIG =================================================================
 
