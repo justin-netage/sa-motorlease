@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.34
+Stable tag: 2.6.35
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.35 =
+* **"Recently Added" is the default sort.** The featured strip already sits above the grid, so opening the grid with the same featured vehicles again just repeated them. The grid now opens newest-first; "Featured" stays in the dropdown for anyone who wants it. The dropdown lists Recently Added first, the URL omits `sort=` for the default (so `?sort=featured` is what a shared Featured view carries), and Clear resets to it. Filter asset version bumped to 2.0.3.
 
 = 2.6.34 =
 * **The "Featured" sort now actually puts featured vehicles first.** The default sort option in the vehicle filter was catalogue order — date-descending, i.e. "Recently Added" under another name — and the WooCommerce Featured flag was not even in the filter's index, so flagging a vehicle changed nothing in the grid. The flag is now indexed and the Featured sort leads with the flagged vehicles (available ones only — a sold vehicle does not head the catalogue), then everything else in catalogue order. Applied to both the server-side sort and its client-side mirror. Filter asset version bumped to 2.0.2, which also rebuilds the cached index and client dataset so the flag is present.
