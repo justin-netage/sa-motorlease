@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '2.0.2' );
+    define( 'SA_VF_VERSION', '2.0.3' );
 }
 
 /**
@@ -219,17 +219,26 @@ function sa_vf_km_buckets() {
     ];
 }
 
-/** Sort options: key => human label. */
+/**
+ * Sort options: key => human label. The first is the default — "Recently
+ * Added": the featured strip already sits above the grid, so leading the grid
+ * with the same vehicles again just repeats them.
+ */
 function sa_vf_sort_options() {
     return [
+        'newest'     => 'Recently Added',
         'featured'   => 'Featured',
         'price_asc'  => 'Price: Low to High',
         'price_desc' => 'Price: High to Low',
         'year_desc'  => 'Year: Newest First',
         'year_asc'   => 'Year: Oldest First',
         'km_asc'     => 'Mileage: Lowest First',
-        'newest'     => 'Recently Added',
     ];
+}
+
+/** The default sort key (the first option). */
+function sa_vf_default_sort() {
+    return array_key_first( sa_vf_sort_options() );
 }
 
 const SA_VF_PER_PAGE = 15;
@@ -969,7 +978,7 @@ add_action( 'admin_init', function () {
     // Per-request query timings with the index warm.
     $args = sa_vf_parse_args( [] );
     $t0 = microtime( true ); $ids = sa_vf_matching_ids( $args ); $tfilter = microtime( true ) - $t0;
-    $t0 = microtime( true ); $ids = sa_vf_sort_ids( $ids, 'featured' ); $tsort = microtime( true ) - $t0;
+    $t0 = microtime( true ); $ids = sa_vf_sort_ids( $ids, sa_vf_default_sort() ); $tsort = microtime( true ) - $t0;
     $t0 = microtime( true ); $av  = sa_vf_available( $args ); $tavail = microtime( true ) - $t0;
     $t0 = microtime( true ); $res = sa_vf_run_query( $args ); $trun = microtime( true ) - $t0;
     $out[] = '';
@@ -1016,7 +1025,7 @@ function sa_vf_parse_args( array $src ) {
     };
 
     $args = [
-        'sort'     => 'featured',
+        'sort'     => sa_vf_default_sort(),
         'page'     => 1,
         // "Available Only" is OFF by default — sold vehicles are listed alongside
         // available ones (badged SOLD) unless the visitor opts to hide them
@@ -1372,7 +1381,7 @@ function sa_vf_payload_key( array $args ) {
     $facets = $args['facets'] ?? [];
     ksort( $facets );
     $norm = [
-        'sort'      => $args['sort'] ?? 'featured',
+        'sort'      => $args['sort'] ?? sa_vf_default_sort(),
         'page'      => (int) ( $args['page'] ?? 1 ),
         'hide_sold' => ! empty( $args['hide_sold'] ) ? 1 : 0,
         'km'        => $args['km'] ?? '',

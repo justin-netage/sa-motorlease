@@ -30,6 +30,8 @@
     var CAT  = Number(CFG.category) || 0;
     var PB   = Array.isArray(CFG.priceBuckets) ? CFG.priceBuckets : [];
     var KB   = Array.isArray(CFG.kmBuckets) ? CFG.kmBuckets : [];
+    // Default sort = the first option the server shipped (Recently Added).
+    var DEFAULT_SORT = (CFG.sort && Object.keys(CFG.sort)[0]) || 'newest';
 
     // Catalogue order (as shipped) is the "Featured" fallback order, behind
     // the vehicles flagged Featured in WooCommerce (available ones only).
@@ -57,7 +59,7 @@
 
     /** Read the current filter state from the form controls. */
     function collect() {
-        var a = { facets: {}, price: '', km: '', region: '', hideSold: false, sort: 'featured' };
+        var a = { facets: {}, price: '', km: '', region: '', hideSold: false, sort: DEFAULT_SORT };
         form.querySelectorAll('.sa-vf-select[data-facet]').forEach(function (s) {
             var k = s.getAttribute('data-facet');
             if (k === 'price')  { a.price = s.value; return; }
@@ -173,7 +175,7 @@
         if (a.km) qs.set('km', a.km);
         if (a.region) qs.set('region', a.region);
         if (a.hideSold) qs.set('available_only', '1');
-        if (a.sort && a.sort !== 'featured') qs.set('sort', a.sort);
+        if (a.sort && a.sort !== DEFAULT_SORT) qs.set('sort', a.sort);
         var url = window.location.pathname + (qs.toString() ? '?' + qs.toString() : '');
         window.history.replaceState(null, '', url);
     }
@@ -591,7 +593,7 @@
         });
         // Unchecked ("show everything") is the default state.
         if (availToggle) availToggle.checked = false;
-        if (sortSel) sortSel.value = 'featured';
+        if (sortSel) sortSel.value = DEFAULT_SORT;
         rerun();
     }
 
