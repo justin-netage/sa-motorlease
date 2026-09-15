@@ -31,8 +31,9 @@
     var PB   = Array.isArray(CFG.priceBuckets) ? CFG.priceBuckets : [];
     var KB   = Array.isArray(CFG.kmBuckets) ? CFG.kmBuckets : [];
 
-    // Catalogue order (as shipped) is the "Featured" fallback order.
-    DATA.forEach(function (v, i) { v._i = i; });
+    // Catalogue order (as shipped) is the "Featured" fallback order, behind
+    // the vehicles flagged Featured in WooCommerce (available ones only).
+    DATA.forEach(function (v, i) { v._i = i; v._lead = (v.ft && !v.sold) ? 1 : 0; });
 
     var state = { page: 1 };
 
@@ -105,7 +106,7 @@
                 case 'year_asc':   return (A.year || 0) - (B.year || 0);
                 case 'km_asc':     return (A.km || 0) - (B.km || 0);
                 case 'newest':     return B.id - A.id;
-                default:           return A._i - B._i; // featured = catalogue order
+                default:           return (B._lead - A._lead) || (A._i - B._i); // featured first, then catalogue order
             }
         });
     }

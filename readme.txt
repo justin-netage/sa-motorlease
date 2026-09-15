@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.33
+Stable tag: 2.6.34
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,10 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.34 =
+* **The "Featured" sort now actually puts featured vehicles first.** The default sort option in the vehicle filter was catalogue order — date-descending, i.e. "Recently Added" under another name — and the WooCommerce Featured flag was not even in the filter's index, so flagging a vehicle changed nothing in the grid. The flag is now indexed and the Featured sort leads with the flagged vehicles (available ones only — a sold vehicle does not head the catalogue), then everything else in catalogue order. Applied to both the server-side sort and its client-side mirror. Filter asset version bumped to 2.0.2, which also rebuilds the cached index and client dataset so the flag is present.
+* **Releases now go live for visitors without a manual cache clear.** A plugin update changes what pages render, but only catalogue changes purged the host's full-page cache, so after every release the public site kept serving the pre-update HTML (old script version, old carousel markup) until the next import happened to flush it — 2.6.33 sat behind a cached homepage for exactly this reason. The first request that runs under a new plugin version now drops the vehicle caches and purges the page cache itself.
 
 = 2.6.33 =
 * **Featured carousels now show every featured vehicle.** The strip took the vehicles flagged "Featured" in WooCommerce, then applied the same one-card-per-make collapse and the `limit` cap (8 by default) that were meant for the *top-up* stock. With 17 vehicles flagged across 9 makes the homepage carousel showed 8 — a single Haval, Polo, Jaecoo, Kwid and C3 each — and dropped the rest, so flagging a vehicle often had no visible effect. Flagged vehicles are now a hand-picked set and always all appear, newest first; `limit` is the minimum card count that unflagged stock tops up to, and `dedupe` only shapes that top-up (seeded with the makes the flagged vehicles already cover, so the filler adds variety rather than repeats).
