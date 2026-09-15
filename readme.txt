@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.32
+Stable tag: 2.6.33
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.33 =
+* **Featured carousels now show every featured vehicle.** The strip took the vehicles flagged "Featured" in WooCommerce, then applied the same one-card-per-make collapse and the `limit` cap (8 by default) that were meant for the *top-up* stock. With 17 vehicles flagged across 9 makes the homepage carousel showed 8 — a single Haval, Polo, Jaecoo, Kwid and C3 each — and dropped the rest, so flagging a vehicle often had no visible effect. Flagged vehicles are now a hand-picked set and always all appear, newest first; `limit` is the minimum card count that unflagged stock tops up to, and `dedupe` only shapes that top-up (seeded with the makes the flagged vehicles already cover, so the filler adds variety rather than repeats).
 
 = 2.6.32 =
 * **Dead vehicle URLs now redirect to live stock instead of a 404.** Vehicles are hard-deleted when they drop out of the PACE feed (prune) or a week after they sell, and nothing told anyone holding the old link: Google kept the pages indexed for weeks (every top result for `site:samotorlease.co.za/listing/` was a 404), shared WhatsApp links and browser history went dead, and an anonymous visitor could be served a cached listing grid rendered before the deletion. Any 404 under the product permalink base (`/listing/…`) is now a 301 to the listings page, narrowed to the vehicle's make when the slug names one that still has stock (`/listings/?make=citroen`), so the visitor lands on comparable vehicles and search engines are told to drop the URL. Sent with no-cache headers so a slug reissued to a new vehicle later is not shadowed by a browser- or edge-cached redirect.

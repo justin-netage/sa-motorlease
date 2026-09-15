@@ -1509,11 +1509,6 @@ function sa_vf_shortcode( $atts ) {
  * Featured listings carousel (category-scoped)
  * ======================================================================== */
 
-/**
- * Product IDs for the featured strip: WooCommerce "Featured" products in the
- * given category, topped up with the newest vehicles in that category when
- * fewer than $limit are flagged. category_id 0 = whole catalogue.
- */
 /** tax_query clause excluding sold vehicles, or null if the taxonomy is absent. */
 function sa_vf_not_sold_clause() {
     if ( ! taxonomy_exists( 'pa_sold' ) ) return null;
@@ -1559,10 +1554,16 @@ function sa_vf_dedupe_mode( $val ) {
     return 'make'; // default: one card per brand
 }
 
+/**
+ * Product IDs for the featured strip: every WooCommerce "Featured" product in
+ * the given category (hand-picked, so never collapsed or capped), topped up
+ * with the newest vehicles in that category when fewer than $limit are
+ * flagged. category_id 0 = whole catalogue.
+ */
 function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
     $limit = max( 1, (int) $limit );
-    // Pull a generous pool so that, after collapsing repeats, we can still fill
-    // the slider with distinct vehicles.
+    // Pull a generous top-up pool so that, after collapsing repeats, we can
+    // still fill the slider with distinct vehicles.
     $pool = max( $limit * 8, 48 );
 
     $base = [];
@@ -1582,21 +1583,29 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
     $featured[] = [ 'taxonomy' => 'product_visibility', 'field' => 'name', 'terms' => 'featured' ];
     if ( count( $featured ) > 1 ) $featured = array_merge( [ 'relation' => 'AND' ], $featured );
 
-    $featured_ids = sa_vf_post_ids( get_posts( [
+    // Flagged vehicles are a deliberate merchant choice: show every one of
+    // them, newest first, regardless of $limit or the de-dupe mode. (Both used
+    // to apply here too, so with 17 flagged vehicles across 9 makes the strip
+    // showed 8 — one per make — and padded the rest with unflagged stock.)
+    $out = sa_vf_post_ids( get_posts( [
         'post_type'      => 'product',
         'post_status'    => 'publish',
-        'posts_per_page' => $pool,
+        'posts_per_page' => -1,
         'fields'         => 'ids',
         'no_found_rows'  => true,
         'orderby'        => 'date',
         'order'          => 'DESC',
         'tax_query'      => $featured,
     ] ) );
+    $out = array_values( array_unique( array_map( 'intval', $out ) ) );
 
-    // Pick distinct make+model up to the limit, first from the featured pool,
-    // then topped up with the newest vehicles in the same scope.
-    $out  = [];
+    // The de-dupe only shapes the top-up: seed it with the makes / models the
+    // flagged vehicles already cover so the filler adds variety, not repeats.
     $seen = [];
+    foreach ( $out as $id ) {
+        $key = sa_vf_dedupe_key( $id, $dedupe );
+        if ( $key !== '' ) $seen[ $key ] = 1;
+    }
     $take = function ( $ids ) use ( &$out, &$seen, $limit, $dedupe ) {
         foreach ( $ids as $id ) {
             if ( count( $out ) >= $limit ) break;
@@ -1609,7 +1618,6 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
             $out[] = (int) $id;
         }
     };
-    $take( $featured_ids );
 
     if ( count( $out ) < $limit ) {
         $fill_args = [
@@ -1709,12 +1717,12 @@ add_shortcode( 'sa_featured_vehicles', 'sa_vf_featured_shortcode' );
 function sa_vf_featured_shortcode( $atts ) {
     $atts = shortcode_atts( [
         'category'  => '',                // product_cat id/slug; empty = current archive term
-        'limit'     => 8,
+        'limit'     => 8,                 // minimum cards: flagged vehicles always all show, newest stock tops up to this
         'title'     => 'Featured Listings',
         'full'      => 'no',              // "yes" = full-bleed width
         'max_width' => '',                // e.g. 1100 or 1100px to tighten the container
         'bg'        => '',                // panel background colour ('' / none = transparent)
-        'dedupe'    => 'make',            // 'make' (one per brand), 'make_model', or 'none'
+        'dedupe'    => 'make',            // top-up only: 'make' (one per brand), 'make_model', or 'none'
     ], $atts, 'sa_featured_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
