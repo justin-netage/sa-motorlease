@@ -2,13 +2,13 @@
 /**
  * Plugin Name: SA Motorlease
  * Description: Combined SA Motorlease plugin. Imports vehicles from the PaceApp feed into WooCommerce (create/update/prune + image repair), and provides lead qualification (REST + DB table), Gravity Forms #5 forwarding, application/qualification frontend scripts, vehicle-locations carousel data, sold-product/duplicate/missing-feed cleanup utilities, attribute backfills and CSV export.
- * Version: 2.6.36
+ * Version: 2.6.37
  * Author: Net Age
  */
 
 if (!defined('ABSPATH')) exit;
 
-define( 'SA_MOTORLEASE_VERSION', '2.6.36' );
+define( 'SA_MOTORLEASE_VERSION', '2.6.37' );
 define( 'SA_MOTORLEASE_FILE', __FILE__ );
 define( 'SA_MOTORLEASE_DIR', plugin_dir_path( __FILE__ ) );
 define( 'SA_MOTORLEASE_URL', plugin_dir_url( __FILE__ ) );
@@ -58,6 +58,9 @@ require_once SA_MOTORLEASE_DIR . 'includes/dead-listing-redirect.php';
 // Site notice — banner + once-per-session popup, for when the site stays up
 // but something behind it (e.g. the PACE lead API) is degraded.
 require_once SA_MOTORLEASE_DIR . 'includes/site-notice.php';
+
+// NEW badge on the single product page (the cards get theirs from the filter).
+require_once SA_MOTORLEASE_DIR . 'includes/single-product-badge.php';
 
 /**
  * Publish a new plugin version to anonymous visitors.
