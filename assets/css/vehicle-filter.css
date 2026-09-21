@@ -579,7 +579,9 @@
     transition: opacity .3s ease;
 }
 .sa-vf-card:hover .sa-vf-card__img--hover { opacity: 1; }
-.sa-vf-card__sold {
+/* Corner badges. A card shows at most one: SOLD, else NEW (new-or-used). */
+.sa-vf-card__sold,
+.sa-vf-card__new {
     position: absolute;
     top: 12px; right: 0;
     background: var(--sa-vf-orange);
@@ -590,6 +592,7 @@
     padding: 5px 12px;
     border-radius: 3px 0 0 3px;
 }
+.sa-vf-card__new { background: var(--sa-vf-navy); }
 /* Dim only the BASE image on sold cards — not the hover overlay, which must
    stay at opacity:0 (otherwise both images show at once = double exposure). */
 .sa-vf-card.is-sold .sa-vf-card__img:not(.sa-vf-card__img--hover) { opacity: .82; }
