@@ -59,6 +59,7 @@ This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisEl
 == Changelog ==
 
 = 2.6.36 =
+* **NEW badge on vehicle cards.** Cards for vehicles whose *New or Used* attribute is New carry a navy NEW badge in the corner, in the same spot and style as the orange SOLD badge. A card shows at most one badge: a sold vehicle shows SOLD only, whatever its condition. Read from the cached index (the condition facet), with the same direct-term fallback the SOLD badge uses. Filter asset version bumped to 2.0.4, which also rebuilds the cached card HTML.
 * **Carousels can be scoped by vehicle attribute.** `[sa_featured_vehicles]` takes `condition`, `make`, `model`, `transmission`, `body_type`, `fuel` and `year` — e.g. `[sa_featured_vehicles condition="new" title="New Vehicles"]` shows only new vehicles: the featured ones first, topped up with the newest new vehicles. A comma lists alternatives (`fuel="petrol,diesel"`), attributes combine with AND, and `attr="new-or-used:new; transmission:automatic"` reaches any other product attribute by taxonomy (`;` between attributes, `|` between values). Values match as term slugs after sanitising, so `New` and `new` both work. The scope applies alongside `category`, and the strip is omitted when nothing matches.
 
 = 2.6.35 =

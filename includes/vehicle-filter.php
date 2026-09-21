@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! defined( 'SA_VF_VERSION' ) ) {
     // Bump to bust the browser cache when editing the JS/CSS.
-    define( 'SA_VF_VERSION', '2.0.3' );
+    define( 'SA_VF_VERSION', '2.0.4' );
 }
 
 /**
@@ -1326,11 +1326,16 @@ function sa_vf_render_card( $id, $priority = false ) {
     if ( $row ) {
         $km_val  = $row['km'];
         $is_sold = $row['sold'];
+        $is_new  = in_array( 'new', $row['facets']['condition'] ?? [], true );
     } else {
         $km_val     = sa_vf_term_num( $id, 'pa_kilometers' );
         $sold_terms = get_the_terms( $id, 'pa_sold' );
         $is_sold    = $sold_terms && ! is_wp_error( $sold_terms ) && strcasecmp( reset( $sold_terms )->name, 'Yes' ) === 0;
+        $cond_terms = get_the_terms( $id, 'pa_new-or-used' );
+        $is_new     = $cond_terms && ! is_wp_error( $cond_terms ) && reset( $cond_terms )->slug === 'new';
     }
+    // SOLD wins the badge spot: a sold vehicle's condition no longer matters.
+    $show_new = $is_new && ! $is_sold;
 
     $has_hover = $hover && $hover !== $img;
 
@@ -1351,6 +1356,8 @@ function sa_vf_render_card( $id, $priority = false ) {
             <?php endif; ?>
             <?php if ( $is_sold ) : ?>
                 <span class="sa-vf-card__sold">SOLD</span>
+            <?php elseif ( $show_new ) : ?>
+                <span class="sa-vf-card__new">NEW</span>
             <?php endif; ?>
         </div>
         <div class="sa-vf-card__body">
