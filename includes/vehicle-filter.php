@@ -1586,8 +1586,12 @@ function sa_vf_dedupe_mode( $val ) {
  * the given category (hand-picked, so never collapsed or capped), topped up
  * with the newest vehicles in that category when fewer than $limit are
  * flagged. category_id 0 = whole catalogue.
+ *
+ * @param array $scope extra tax_query clauses (e.g. from
+ *                     sa_vf_carousel_scope()) that narrow both the flagged set
+ *                     and the top-up — a "New vehicles" strip, say.
  */
-function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
+function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make', array $scope = [] ) {
     $limit = max( 1, (int) $limit );
     // Pull a generous top-up pool so that, after collapsing repeats, we can
     // still fill the slider with distinct vehicles.
@@ -1605,6 +1609,8 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
     // Never feature sold vehicles.
     $ns = sa_vf_not_sold_clause();
     if ( $ns ) $base[] = $ns;
+
+    foreach ( $scope as $clause ) $base[] = $clause;
 
     $featured = $base;
     $featured[] = [ 'taxonomy' => 'product_visibility', 'field' => 'name', 'terms' => 'featured' ];
@@ -1666,6 +1672,60 @@ function sa_vf_featured_ids( $category_id = 0, $limit = 8, $dedupe = 'make' ) {
 }
 
 /**
+ * Attribute scope for a carousel → tax_query clauses.
+ *
+ * Named attributes use the filter's facet keys (condition, make, model,
+ * transmission, body_type, fuel, year); each takes one or more values,
+ * comma-separated = any of them. `attr` reaches any other product attribute
+ * by taxonomy: `attr="new-or-used:new; fuel:diesel|petrol"` — `;` between
+ * attributes, `|` between alternative values, the `pa_` prefix optional.
+ * Values are matched as term slugs after sanitising, so `New`, `new` and
+ * `Sport Utility Vehicle` all work. Attributes combine with AND.
+ *
+ * @param array $atts shortcode attributes
+ * @return array tax_query clauses (no 'relation' key)
+ */
+function sa_vf_carousel_scope( array $atts ) {
+    $wanted = []; // taxonomy => [slugs]
+
+    $add = function ( $tax, $raw, $sep ) use ( &$wanted ) {
+        $tax = (string) $tax;
+        if ( strpos( $tax, 'pa_' ) !== 0 ) $tax = 'pa_' . $tax;
+        foreach ( explode( $sep, (string) $raw ) as $v ) {
+            $slug = sanitize_title( trim( $v ) );
+            if ( $slug !== '' ) $wanted[ $tax ][] = $slug;
+        }
+    };
+
+    foreach ( sa_vf_facets() as $f ) {
+        if ( ! empty( $f['category'] ) ) continue; // region = `category` attribute
+        if ( isset( $atts[ $f['key'] ] ) && trim( (string) $atts[ $f['key'] ] ) !== '' ) {
+            $add( $f['tax'], $atts[ $f['key'] ], ',' );
+        }
+    }
+
+    if ( ! empty( $atts['attr'] ) ) {
+        foreach ( explode( ';', (string) $atts['attr'] ) as $pair ) {
+            if ( strpos( $pair, ':' ) === false ) continue;
+            list( $tax, $vals ) = explode( ':', $pair, 2 );
+            $tax = sanitize_key( trim( $tax ) );
+            if ( $tax !== '' ) $add( $tax, $vals, '|' );
+        }
+    }
+
+    $clauses = [];
+    foreach ( $wanted as $tax => $slugs ) {
+        if ( ! taxonomy_exists( $tax ) ) continue;
+        $clauses[] = [
+            'taxonomy' => $tax,
+            'field'    => 'slug',
+            'terms'    => array_values( array_unique( $slugs ) ),
+        ];
+    }
+    return $clauses;
+}
+
+/**
  * Slider shell used by the featured and qualified carousels.
  *
  * @param string $items_html rendered .sa-vf-featured__item markup (may be '')
@@ -1706,9 +1766,9 @@ function sa_vf_featured_shell( $items_html, $title = '', $full = false, $attrs =
  * visitor keeps clicking / dragging towards the end of the strip. Keeps the
  * initial HTML the same size however many vehicles are flagged.
  */
-function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false, $attrs = [], $extra_class = '', $dedupe = 'make' ) {
+function sa_vf_render_featured( $category_id = 0, $limit = 8, $title = 'Featured Listings', $full = false, $attrs = [], $extra_class = '', $dedupe = 'make', array $scope = [] ) {
     $limit = max( 1, (int) $limit );
-    $ids   = sa_vf_featured_ids( $category_id, $limit, $dedupe );
+    $ids   = sa_vf_featured_ids( $category_id, $limit, $dedupe, $scope );
     if ( ! $ids ) return '';
 
     $first = array_slice( $ids, 0, $limit );
@@ -1794,6 +1854,15 @@ function sa_vf_featured_shortcode( $atts ) {
         'max_width' => '',                // e.g. 1100 or 1100px to tighten the container
         'bg'        => '',                // panel background colour ('' / none = transparent)
         'dedupe'    => 'make',            // top-up only: 'make' (one per brand), 'make_model', or 'none'
+        // Attribute scope — see sa_vf_carousel_scope(). Comma = any of.
+        'condition'    => '',             // new / used
+        'make'         => '',
+        'model'        => '',
+        'transmission' => '',             // automatic / manual
+        'body_type'    => '',             // suv, hatchback, ldv, …
+        'fuel'         => '',             // petrol / diesel
+        'year'         => '',
+        'attr'         => '',             // any other attribute: "tax:val|val; tax2:val"
     ], $atts, 'sa_featured_vehicles' );
 
     wp_enqueue_style( 'sa-vehicle-filter' );
@@ -1817,7 +1886,8 @@ function sa_vf_featured_shortcode( $atts ) {
     return sa_vf_render_featured(
         $cat_id, (int) $atts['limit'], $atts['title'], $full,
         $style ? [ 'style' => $style ] : [],
-        $bg['class'], sa_vf_dedupe_mode( $atts['dedupe'] )
+        $bg['class'], sa_vf_dedupe_mode( $atts['dedupe'] ),
+        sa_vf_carousel_scope( $atts )
     );
 }
 
