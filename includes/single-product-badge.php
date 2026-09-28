@@ -13,8 +13,8 @@
  * this only prints NEW when the vehicle is not sold.
  *
  * The CSS mirrors the theme's `.sold-label` (Customizer custom CSS) so the two
- * badges sit identically, and is printed inline on product pages only — a few
- * lines are not worth a request.
+ * badges sit identically, inverting its colours (white plate, orange text), and
+ * is printed inline on product pages only — a few lines are not worth a request.
  */
 
 if ( ! defined( 'ABSPATH' ) ) exit;
@@ -48,8 +48,8 @@ add_action( 'wp_head', function () {
     position: absolute;
     top: 16px;
     right: 0;
-    background-color: #003b65;
-    color: #fff;
+    background-color: #fff;
+    color: #f47b24;
     padding: 5px 10px;
     font-weight: 900;
     font-size: 0.9rem;

@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.37
+Stable tag: 2.6.38
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.38 =
+* **The NEW badge is now white with orange text**, on the listing cards and the single product page — the inverse of the orange SOLD badge rather than the navy it shipped with in 2.6.37. Filter asset version bumped to 2.0.5.
 
 = 2.6.37 =
 * **NEW badge on the single product page.** The vehicle's own page now carries the same NEW badge as its listing card, in the corner of the image gallery where the theme puts its Sold label, styled to match it (navy rather than orange). Same rule as the cards: a sold vehicle shows Sold only. Hooked into the theme's `flatsome_sale_flash` action inside the gallery box, so the child theme's product-image template needs no change and the CSS is printed by the plugin on product pages.
