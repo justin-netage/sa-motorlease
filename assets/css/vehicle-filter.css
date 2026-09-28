@@ -592,7 +592,8 @@
     padding: 5px 12px;
     border-radius: 3px 0 0 3px;
 }
-.sa-vf-card__new { background: var(--sa-vf-navy); }
+/* NEW inverts the SOLD badge: white plate, orange text. */
+.sa-vf-card__new { background: #fff; color: var(--sa-vf-orange); }
 /* Dim only the BASE image on sold cards — not the hover overlay, which must
    stay at opacity:0 (otherwise both images show at once = double exposure). */
 .sa-vf-card.is-sold .sa-vf-card__img:not(.sa-vf-card__img--hover) { opacity: .82; }
