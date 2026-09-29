@@ -4,7 +4,7 @@ Tags: woocommerce, vehicles, importer, paceapp, gravityforms
 Requires at least: 5.8
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 2.6.38
+Stable tag: 2.6.39
 License: GPLv2 or later
 
 Combined SA Motorlease plugin: PaceApp vehicle importer plus lead-qualification, application forwarding and frontend helpers for the SA Motorlease site.
@@ -57,6 +57,9 @@ This plugin merges two previously-separate plugins (sa-motorlease-product-import
 This plugin self-updates via [Plugin Update Checker](https://github.com/YahnisElsts/plugin-update-checker), pointed at https://github.com/justin-netage/sa-motorlease (branch `main`, release assets). To ship an update: bump the `Version:` header and `SA_MOTORLEASE_VERSION` constant, commit, then publish a GitHub Release whose tag matches the new version. A workflow attaches the build zip automatically.
 
 == Changelog ==
+
+= 2.6.39 =
+* **"See what vehicles you qualify for" works with the new vehicle filter again.** The button on the qualification results page still linked with the old WooCommerce Product Filter's `?wpf_min_price=0&wpf_max_price=<limit>` params, which the new filter ignores, so visitors landed on the unfiltered catalogue. The button now links to `?price=0-<limit>`, and the filter accepts any whole-rand max-price ceiling in the URL (not just the ones on the dropdown ladder), adding it to the Max Price dropdown as "Up to R<limit>". Old `wpf_max_price` links are still honoured and mapped to the same ceiling.
 
 = 2.6.38 =
 * **The NEW badge is now white with orange text**, on the listing cards and the single product page — the inverse of the orange SOLD badge rather than the navy it shipped with in 2.6.37. Filter asset version bumped to 2.0.5.

@@ -36,9 +36,14 @@ jQuery(function($){
   $('#rateLimitResult').text(formattedLimit);
   $('#rateLimitResultMobile').text(formattedLimit);
 
-  const baseLink = $('#qualifiedVehiclesLink').attr('href') || '';
+  // Point the button at the vehicle filter with the limit as its max-price
+  // ceiling. Keep the page path from the button's href but drop its query —
+  // the page content still carries the old WooCommerce Product Filter params
+  // (?wpf_min_price=0&wpf_max_price=), which the new filter doesn't use.
+  const baseLink = $('#qualifiedVehiclesLink').attr('href') || '/listings/';
+  const basePath = baseLink.split(/[?#]/)[0] || '/listings/';
   $('#qualifiedVehiclesLink')
-    .attr('href', baseLink.replace(/\/$/, '') + userRentalLimit);
+    .attr('href', basePath + '?price=0-' + Math.floor(userRentalLimit));
 
   // --- 4. Fetch qualified vehicles ---
   $.getJSON(`/wp-json/samotorlease/v1/qualified-vehicles?rental_limit=${userRentalLimit}`)
