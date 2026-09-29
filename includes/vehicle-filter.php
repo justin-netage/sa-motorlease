@@ -665,7 +665,26 @@ function sa_vf_build_index() {
 function sa_vf_price_bucket_by_key( $key ) {
     if ( $key === '' ) return null;
     foreach ( sa_vf_price_buckets() as $b ) if ( $b['key'] === $key ) return $b;
+    // Off-ladder ceiling (e.g. a qualified visitor's exact rental limit).
+    if ( preg_match( '/^0-(\d{1,7})$/', (string) $key, $m ) && (int) $m[1] > 0 ) {
+        $cap = (int) $m[1];
+        return [
+            'key'   => '0-' . $cap,
+            'label' => 'Up to R' . number_format( $cap, 0, '.', ',' ),
+            'min'   => 0,
+            'max'   => $cap + 0.01,
+        ];
+    }
     return null;
+}
+
+/** Slot an extra ceiling into this request's max-price ladder, in order. */
+function sa_vf_add_price_bucket( array $bucket ) {
+    $buckets = sa_vf_price_buckets();
+    $memo =& sa_vf_memo();
+    $buckets[] = $bucket;
+    usort( $buckets, function ( $a, $b ) { return $a['max'] <=> $b['max']; } );
+    $memo['price_buckets'] = $buckets;
 }
 function sa_vf_km_bucket_by_key( $key ) {
     if ( $key === '' ) return null;
@@ -1039,11 +1058,26 @@ function sa_vf_parse_args( array $src ) {
         'facets'   => [],
     ];
 
-    // Max price ceiling — validated against the known set.
+    // Max price ceiling — validated against the known set. Links from the
+    // qualification results page carry the visitor's exact rental limit
+    // (price=0-7543), which won't be on the ladder; accept any whole-rand
+    // ceiling and add it to the dropdown. wpf_max_price is the old WooCommerce
+    // Product Filter plugin's param, still in older links and page content.
     $price = $str( 'price' );
+    if ( $price === '' ) {
+        $legacy = $str( 'wpf_max_price' );
+        if ( $legacy !== '' && is_numeric( $legacy ) ) $price = '0-' . (int) floor( (float) $legacy );
+    }
     if ( $price !== '' ) {
         foreach ( sa_vf_price_buckets() as $b ) {
             if ( $b['key'] === $price ) { $args['price'] = $price; break; }
+        }
+        if ( $args['price'] === '' ) {
+            $custom = sa_vf_price_bucket_by_key( $price );
+            if ( $custom ) {
+                sa_vf_add_price_bucket( $custom );
+                $args['price'] = $price;
+            }
         }
     }
 
